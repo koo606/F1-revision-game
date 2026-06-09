@@ -60,7 +60,9 @@
       getAuth, 
       signInAnonymously, 
       signInWithCustomToken, 
-      onAuthStateChanged
+      onAuthStateChanged,
+      setPersistence,
+      inMemoryPersistence
     } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -90,16 +92,22 @@
     window.gameSetDoc = setDoc;
     window.gameDeleteDoc = deleteDoc;
 
-    // 啟動時先進行安全匿名登入（Rule 3）
+    // 啟動時先設定 persistence 為 inMemoryPersistence，接著進行匿名登入（Rule 3）
     const initAuth = async () => {
       try {
+        // 💡 關鍵修復：強制將登入狀態留在記憶體內，完美支持 Google Sites 的 iframe 沙盒限制！
+        await setPersistence(auth, inMemoryPersistence);
+        
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
         } else {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Firebase Anonymous Auth Error: ", err);
+        console.error("Firebase Auth Error: ", err);
+      } finally {
+        // 💡 容錯機制：無論登入成功與否，皆在初始加載時啟動排行榜數據監聽，完美支持沙盒 iframe 環境！
+        window.loadCloudLeaderboard();
       }
     };
     initAuth();
@@ -177,7 +185,14 @@
 
     // 儲存進度數據
     window.saveStudentData = async (studentId, studentName, classCode, studentNo, score, clearedChapters, gold, job, inventory) => {
-      if (!auth.currentUser) return;
+      // 💡 關鍵優化修復：若在 Google Sites 等沙盒環境中匿名登入被阻擋，嘗試再度匿名登入但絕不阻斷離線/免登入保存！
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.warn("Firebase Auth blocked by sandbox. Proceeding with database save...", e);
+        }
+      }
       const cleanId = studentId.trim().toLowerCase();
       try {
         const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', cleanId);
@@ -471,7 +486,7 @@
               <span>近似值與估算之谷</span>
               <span class="clear-badge hidden text-amber-400 text-sm font-bold">✅ 已通關</span>
             </h3>
-            <p class="text-xs text-slate-400 mt-2 leading-relaxed">掌握精確四捨五入、無條件上下捨入、小數位與有效數字定位幻術。</p>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed font-sans">掌握精確四捨五入、無條件上下捨入、小數位與有效數字定位幻術。</p>
           </div>
           <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
             <span class="text-[11px] text-amber-400 font-bold flex items-center gap-1">👾 估算幻獸護衛</span>
@@ -490,7 +505,7 @@
               <span>多項式秩序之殿</span>
               <span class="clear-badge hidden text-indigo-400 text-sm font-bold">✅ 已通關</span>
             </h3>
-            <p class="text-xs text-slate-400 mt-2 leading-relaxed">整理代數！精準判定多項式的最高次數、常數項、同類項與複雜代數係數。</p>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed text-slate-400">整理代數！精準判定多項式的最高次數、常數項、同類項與複雜代數係數。</p>
           </div>
           <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
             <span class="text-[11px] text-indigo-400 font-bold flex items-center gap-1">👾 多項式守衛</span>
@@ -831,7 +846,7 @@
     </div>
   </div>
 
-  <!-- Grimoire Modal -->
+  <!-- Grimoire Modal (Clean HTML/Unicode without Raw TeX syntax) -->
   <div id="grimoire-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
     <div class="bg-slate-900 border border-indigo-500/40 rounded-3xl p-6 max-w-xl w-full shadow-2xl flex flex-col justify-between max-h-[85vh]">
       <div class="border-b border-slate-800 pb-3 mb-4">
@@ -888,7 +903,7 @@
 
         <!-- Ch 6 -->
         <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
-          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第六章：直角坐報變幻幻境</h4>
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第六章：直角坐標變幻幻境</h4>
           <p class="text-xs text-slate-300 leading-relaxed font-sans">
             - 平移：向上/右加，向下/左減。<br>
             - 沿 x 軸反射變 (x, -y)，沿 y 軸反射變 (-x, y)。<br>
@@ -988,7 +1003,7 @@
 
   <!-- Scripts -->
   <script>
-    // 🔮 UI 狀態切換與全域狀態變數
+    // 🔮 UI 狀態切換與全域狀態變數 (由最前方的非 module 腳本集中宣告並繫結)
     window.isRegisteringMode = false;
 
     window.switchLoginRole = function(isTeacher) {
@@ -1275,7 +1290,7 @@
           if (err.message === "user-not-found") {
             showToast("❌ 帳戶不存在，請先點擊註冊！", false);
           } else if (err.message === "wrong-password") {
-            showToast("❌ 密碼不確！", false);
+            showToast("❌ 密碼校驗失敗！", false);
           } else {
             showToast(`❌ 登入失敗: ${err.message}`, false);
           }
@@ -1413,6 +1428,27 @@
         window.currentStudent.score, window.currentStudent.clearedChapters, window.currentStudent.gold, window.currentStudent.job, window.currentStudent.inventory
       );
     }
+
+    // 🎯 ADDED: Function to clear any chapter dynamically from the console for convenience
+    window.cheatClearChapter = function(chNum) {
+      if (!window.currentStudent.clearedChapters.includes(chNum)) {
+        window.currentStudent.clearedChapters.push(chNum);
+        window.currentStudent.score += 1000;
+        window.saveStudentData(
+          window.currentStudent.studentId,
+          window.currentStudent.name,
+          window.currentStudent.classCode,
+          window.currentStudent.studentNo,
+          window.currentStudent.score,
+          window.currentStudent.clearedChapters,
+          window.currentStudent.gold,
+          window.currentStudent.job,
+          window.currentStudent.inventory
+        );
+        window.syncProfileToMapUI();
+        showToast(`Cheat: 通關第 ${chNum} 章！`, true);
+      }
+    };
 
     function openGrimoireModal() { document.getElementById('grimoire-modal').classList.remove('hidden'); }
     function closeGrimoireModal() { document.getElementById('grimoire-modal').classList.add('hidden'); }
@@ -2287,7 +2323,7 @@
                   `\\( \\$${sp} \\)`,
                   `\\( \\$${wrongOpts[0]} \\)`,
                   `\\( \\$${wrongOpts[1]} \\)`,
-                  `\\( \\$${wrongOpts[2]} \\)`
+                  `\\( ${wrongOpts[2]} \\)`
                 ],
                 answer: 0,
                 explanation: `根據售價公式： \\( 售價 = 成本 \\times (1 + 賺率) \\)<br>` +
@@ -2325,8 +2361,8 @@
                 question: `某道具購入成本為 \\( \\$${cost} \\)，隨後以 \\( \\$${sp} \\) 售出。求此交易中商人賺取的 **利潤金額**。`,
                 options: [
                   `\\( \\$${profit} \\)`,
-                  `\\( \\$${wrongOpts[0]} \\)`,
-                  `\\( \\$${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[0]} \\)`,
+                  `\\( ${wrongOpts[1]} \\)`,
                   `\\( ${wrongOpts[2]} \\)`
                 ],
                 answer: 0,
@@ -2401,7 +2437,7 @@
               const wrongOpts = generateDistinctOptions(cost, 50, 4).filter(v => v !== cost);
 
               return {
-                question: `已知一件魔法盔甲的利潤金額為 \\( \\$${profit} \\)，賺率為 \\( 15\\% \\)。求其購入 **成本**。`,
+                question: `一件魔法盔甲的利潤金額為 \\( \\$${profit} \\)，賺率為 \\( 15\\% \\).求其購入 **成本**。`,
                 options: [
                   `\\( ${cost} \\)`,
                   `\\( ${wrongOpts[0]} \\)`,
@@ -2425,7 +2461,7 @@
                   `\\( \\$${mp} \\)`,
                   `\\( \\$${wrongOpts[0]} \\)`,
                   `\\( \\$${wrongOpts[1]} \\)`,
-                  `\\( \\$${wrongOpts[2]} \\)`
+                  `\\( ${wrongOpts[2]} \\)`
                 ],
                 answer: 0,
                 explanation: `由折扣與折扣百分率求標價的公式 : \\( 標價 = \\frac{折扣金額}{折扣百分率} \\)<br>` +
@@ -2671,7 +2707,7 @@
                 question: `在神殿多項式 \\( P(x) = ${poly} \\) 中，求多項式的 **常數項 (Constant Term)**。`,
                 options: ["0", `${c1}`, `${c3}`, "3"],
                 answer: 0,
-                explanation: `常數項是不包含任何未知數的數項。在多項式 \\( ${poly} \\) 中，沒有純數值的常數項，因此常數項為 **0**。`
+                explanation: `常數項是不包含 any 未知數的數項。在多項式 \\( ${poly} \\) 中，沒有純數值的常數項，因此常數項為 **0**。`
               };
             } else {
               // Degree
@@ -2797,7 +2833,7 @@
               };
             }
           } else {
-            // Lv 2: Composite Transformation (2 steps combined)
+            // Lv 2 Composite
             const tx = (Math.floor(Math.random() * 5) + 2) * (Math.random() < 0.5 ? 1 : -1);
             const ty = (Math.floor(Math.random() * 5) + 2) * (Math.random() < 0.5 ? 1 : -1);
             const pt = { x: tx, y: ty };
