@@ -183,9 +183,8 @@
       }
     });
 
-    // 儲存進度數據
+    // 儲存進度數據（重構：回傳儲存結果狀態，並提供防禦性登入）
     window.saveStudentData = async (studentId, studentName, classCode, studentNo, score, clearedChapters, gold, job, inventory) => {
-      // 💡 關鍵優化修復：若在 Google Sites 等沙盒環境中匿名登入被阻擋，嘗試再度匿名登入但絕不阻斷離線/免登入保存！
       if (!auth.currentUser) {
         try {
           await signInAnonymously(auth);
@@ -220,8 +219,10 @@
         }, { merge: true });
 
         window.loadCloudLeaderboard();
+        return true; // 💡 成功寫入雲端
       } catch (err) {
         console.error("Failed to write to Firestore:", err);
+        return false; // 💡 寫入失敗
       }
     };
 
@@ -1001,79 +1002,10 @@
     </div>
   </div>
 
-  <!-- Scripts -->
+  <!-- Consolidated Core Game Logic & Helpers -->
   <script>
-    // 🔮 UI 狀態切換與全域狀態變數 (由最前方的非 module 腳本集中宣告並繫結)
+    // 🔮 全域遊戲狀態變數 (僅在最頂部宣告一次)
     window.isRegisteringMode = false;
-
-    window.switchLoginRole = function(isTeacher) {
-      const tabStudent = document.getElementById('tab-student');
-      const tabTeacher = document.getElementById('tab-teacher');
-      const roleBadge = document.getElementById('role-badge');
-      const loginTitle = document.getElementById('login-title-h');
-      const loginSubtitle = document.getElementById('login-subtitle-p');
-      const labelId = document.getElementById('label-id');
-      const loginIdInput = document.getElementById('login-id-input');
-      const primaryBtn = document.getElementById('primary-action-btn');
-      const secondaryBtn = document.getElementById('secondary-toggle-btn');
-      const regFields = document.getElementById('registration-fields');
-
-      isRegisteringMode = false;
-      if (regFields) regFields.classList.add('hidden');
-
-      if (isTeacher) {
-        showToast("⚠️ 已移除教師端功能，僅支援勇者登入挑戰！", false);
-        switchLoginRole(false);
-      } else {
-        if (tabStudent) tabStudent.className = "py-2 text-xs font-bold rounded-lg transition-all text-white bg-purple-950/60 border border-purple-800/40";
-        if (roleBadge) roleBadge.innerText = "學生登入帳號系統";
-        if (loginTitle) loginTitle.innerText = "數理勇者登入";
-        if (loginSubtitle) loginSubtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
-        if (labelId) labelId.innerText = "學生學號 / 帳號";
-        if (loginIdInput) loginIdInput.placeholder = "例如：s12345";
-        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
-        if (secondaryBtn) secondaryBtn.classList.remove('hidden'); // 學生展示註冊
-      }
-    };
-
-    window.toggleRegistrationMode = function() {
-      window.isRegisteringMode = !window.isRegisteringMode;
-      const regFields = document.getElementById('registration-fields');
-      const title = document.getElementById('login-title-h');
-      const subtitle = document.getElementById('login-subtitle-p');
-      const primaryBtn = document.getElementById('primary-action-btn');
-      const secondaryBtn = document.getElementById('secondary-toggle-btn');
-      const divRegClass = document.getElementById('div-reg-class');
-      const divRegStudentNo = document.getElementById('div-reg-student-no');
-      const labelRegStudentName = document.getElementById('label-reg-student-name');
-      const regStudentName = document.getElementById('reg-student-name');
-
-      if (window.isRegisteringMode) {
-        if (regFields) regFields.classList.remove('hidden');
-        if (divRegClass) divRegClass.classList.remove('hidden');
-        if (divRegStudentNo) divRegStudentNo.classList.remove('hidden');
-        if (labelRegStudentName) labelRegStudentName.innerText = "英文名字 (English Name)";
-        if (regStudentName) regStudentName.placeholder = "Alex Chan";
-        if (title) title.innerText = "新勇者帳號註冊";
-        if (subtitle) subtitle.innerText = "請輸入學號，並詳細填寫班別與姓名資訊以建立新存檔";
-        if (primaryBtn) primaryBtn.innerText = "建立角色並選擇職業";
-        if (secondaryBtn) secondaryBtn.innerText = "返回登入畫面";
-      } else {
-        if (regFields) regFields.classList.add('hidden');
-        if (title) title.innerText = "數理勇者登入";
-        if (subtitle) subtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
-        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
-        if (secondaryBtn) secondaryBtn.innerText = "註冊新勇者帳號";
-      }
-    };
-
-    window.switchLoginRole = switchLoginRole;
-    window.toggleRegistrationMode = toggleRegistrationMode;
-  </script>
-
-  <!-- Complete Core Game Logic & Event Handling Script -->
-  <script>
-    // 💡 僅在此處聲明一次全域遊戲狀態變數，徹底杜絕 SyntaxError 衝突！
     window.currentStudent = {
       studentId: "",
       name: "",
@@ -1082,11 +1014,7 @@
       score: 0,
       gold: 200,
       job: "🛡️ 聖騎士",
-      inventory: {
-        potion: 1,
-        scroll: 1,
-        elixir: 0
-      },
+      inventory: { potion: 1, scroll: 1, elixir: 0 },
       clearedChapters: [], 
       clearedCount: 0
     };
@@ -1101,9 +1029,9 @@
     window.currentStage = 1; 
     window.correctAnswersInChapter = 0;
     window.currentQuestionData = null;
-    window.activeElixirApplied = false; 
+    window.activeElixirApplied = false;
 
-    // Audio Web API
+    // Web Audio Synthesizer Setup
     let audioCtx = null;
     let isMuted = false;
 
@@ -1116,7 +1044,7 @@
       }
     }
 
-    function toggleMute() {
+    window.toggleMute = function() {
       isMuted = !isMuted;
       const muteText = document.getElementById('mute-text');
       const muteIcon = document.getElementById('mute-icon');
@@ -1128,9 +1056,9 @@
         if (muteIcon) muteIcon.innerText = "🔊";
         initAudio();
       }
-    }
+    };
 
-    function playSound(type) {
+    window.playSound = function(type) {
       if (isMuted) return;
       initAudio();
       const now = audioCtx.currentTime;
@@ -1241,8 +1169,75 @@
           }
           break;
       }
-    }
+    };
 
+    window.switchLoginRole = function(isTeacher) {
+      const tabStudent = document.getElementById('tab-student');
+      const tabTeacher = document.getElementById('tab-teacher');
+      const roleBadge = document.getElementById('role-badge');
+      const loginTitle = document.getElementById('login-title-h');
+      const loginSubtitle = document.getElementById('login-subtitle-p');
+      const labelId = document.getElementById('label-id');
+      const loginIdInput = document.getElementById('login-id-input');
+      const primaryBtn = document.getElementById('primary-action-btn');
+      const secondaryBtn = document.getElementById('secondary-toggle-btn');
+      const regFields = document.getElementById('registration-fields');
+
+      isRegisteringMode = false;
+      if (regFields) regFields.classList.add('hidden');
+
+      if (isTeacher) {
+        showToast("⚠️ 已移除教師端功能，僅支援勇者登入挑戰！", false);
+        switchLoginRole(false);
+      } else {
+        if (tabStudent) tabStudent.className = "py-2 text-xs font-bold rounded-lg transition-all text-white bg-purple-950/60 border border-purple-800/40";
+        if (roleBadge) roleBadge.innerText = "學生登入帳號系統";
+        if (loginTitle) loginTitle.innerText = "數理勇者登入";
+        if (loginSubtitle) loginSubtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
+        if (labelId) labelId.innerText = "學生學號 / 帳號";
+        if (loginIdInput) loginIdInput.placeholder = "例如：s12345";
+        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
+        if (secondaryBtn) secondaryBtn.classList.remove('hidden'); // 學生展示註冊
+      }
+    };
+
+    window.toggleRegistrationMode = function() {
+      window.isRegisteringMode = !window.isRegisteringMode;
+      const regFields = document.getElementById('registration-fields');
+      const title = document.getElementById('login-title-h');
+      const subtitle = document.getElementById('login-subtitle-p');
+      const primaryBtn = document.getElementById('primary-action-btn');
+      const secondaryBtn = document.getElementById('secondary-toggle-btn');
+      const divRegClass = document.getElementById('div-reg-class');
+      const divRegStudentNo = document.getElementById('div-reg-student-no');
+      const labelRegStudentName = document.getElementById('label-reg-student-name');
+      const regStudentName = document.getElementById('reg-student-name');
+
+      if (window.isRegisteringMode) {
+        if (regFields) regFields.classList.remove('hidden');
+        if (divRegClass) divRegClass.classList.remove('hidden');
+        if (divRegStudentNo) divRegStudentNo.classList.remove('hidden');
+        if (labelRegStudentName) labelRegStudentName.innerText = "英文名字 (English Name)";
+        if (regStudentName) regStudentName.placeholder = "Alex Chan";
+        if (title) title.innerText = "新勇者帳號註冊";
+        if (subtitle) subtitle.innerText = "請輸入學號，並詳細填寫班別與姓名資訊以建立新存檔";
+        if (primaryBtn) primaryBtn.innerText = "建立角色並選擇職業";
+        if (secondaryBtn) secondaryBtn.innerText = "返回登入畫面";
+      } else {
+        if (regFields) regFields.classList.add('hidden');
+        if (title) title.innerText = "數理勇者登入";
+        if (subtitle) subtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
+        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
+        if (secondaryBtn) secondaryBtn.innerText = "註冊新勇者帳號";
+      }
+    };
+
+    window.switchLoginRole = switchLoginRole;
+    window.toggleRegistrationMode = toggleRegistrationMode;
+  </script>
+
+  <!-- Complete Core Game Logic & Event Handling Script -->
+  <script>
     // Submit LogIn or SignUp Authentication
     async function executeAuthentication() {
       const studentIdInput = document.getElementById('login-id-input').value.trim();
@@ -1377,9 +1372,10 @@
 
     window.syncProfileToMapUI = syncProfileToMapUI;
 
-    function triggerManualUpload() {
+    // 💡 修正後的主動上傳分數：加入 async/await 回應結果，如果是 Permission Denied 會跳出紅字警告！
+    async function triggerManualUpload() {
       showToast("🔮 正在詠唱雲端儲存魔法...", true);
-      window.saveStudentData(
+      const success = await window.saveStudentData(
         window.currentStudent.studentId,
         window.currentStudent.name,
         window.currentStudent.classCode,
@@ -1390,9 +1386,11 @@
         window.currentStudent.job,
         window.currentStudent.inventory
       );
-      setTimeout(() => {
-        showToast("✨ 數據已成功存檔至雲端古籍！", true);
-      }, 800);
+      if (success) {
+        showToast("✨ 數據已成功同步至雲端古籍！", true);
+      } else {
+        showToast("❌ 雲端同步失敗！請檢查 F12 控制台或資料庫權限設定。", false);
+      }
     }
 
     function openJobSelection() { document.getElementById('job-modal').classList.remove('hidden'); }
@@ -3018,27 +3016,4 @@
     window.continuePlayingChapter = continuePlayingChapter;
 
     window.openJobSelection = openJobSelection;
-    window.closeJobSelection = closeJobSelection;
-    window.selectJobAction = selectJobAction;
-    window.openShopModal = openShopModal;
-    window.closeShopModal = closeShopModal;
-    window.buyShopItem = buyShopItem;
-    window.openGrimoireModal = openGrimoireModal;
-    window.closeGrimoireModal = closeGrimoireModal;
-    window.openLeaderboardModal = openLeaderboardModal;
-    window.closeLeaderboardModal = closeLeaderboardModal;
-    window.triggerManualUpload = triggerManualUpload;
-    window.confirmAccountDeletion = confirmAccountDeletion;
-    window.closeAccountDeletion = closeAccountDeletion;
-    window.executeAccountDeletion = executeAccountDeletion;
-    window.executeLogout = executeLogout;
-
-    window.startAdventure = startAdventure;
-    window.exitToMap = exitToMap;
-    window.checkAnswer = checkAnswer;
-    window.usePotionItem = usePotionItem;
-    window.useScrollItem = useScrollItem;
-    window.useElixirItem = useElixirItem;
-  </script>
-</body>
-</html>
+    window.
