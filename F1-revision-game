@@ -1,0 +1,3008 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中一數學 RPG：勇者鬥魔王</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- MathJax for Mathematical Formula Rendering (Safe Official Link, No polyfill.io) -->
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <!-- Google Fonts for Gothic & Fantasy Theme -->
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;900&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Noto Sans TC', sans-serif;
+      background: radial-gradient(circle, #0d1527 0%, #030712 100%);
+      background-attachment: fixed;
+    }
+    .rpg-font {
+      font-family: 'Cinzel', 'Noto Sans TC', serif;
+    }
+    .shake-anim {
+      animation: shake 0.5s;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translate(0, 0) rotate(0deg); }
+      20% { transform: translate(-4px, 4px) rotate(-1deg); }
+      40% { transform: translate(-4px, -4px) rotate(1deg); }
+      60% { transform: translate(4px, 4px) rotate(-1deg); }
+      80% { transform: translate(4px, -4px) rotate(1deg); }
+    }
+    .flash-red-anim {
+      animation: flashRed 0.4s;
+    }
+    @keyframes flashRed {
+      0%, 100% { background-color: transparent; }
+      50% { background-color: rgba(220, 38, 38, 0.45); }
+    }
+    .float-text-anim {
+      animation: floatUp 1.5s forwards ease-out;
+    }
+    @keyframes floatUp {
+      0% { transform: translateY(0) scale(0.7); opacity: 0; }
+      15% { opacity: 1; transform: translateY(-25px) scale(1.2); }
+      100% { transform: translateY(-90px) scale(0.9); opacity: 0; }
+    }
+    .glowing-border {
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+    }
+  </style>
+
+  <!-- Firebase Setup -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { 
+      getAuth, 
+      signInAnonymously, 
+      signInWithCustomToken, 
+      onAuthStateChanged
+    } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const defaultFirebaseConfig = {
+      apiKey: "AIzaSyAxCIcx1mNfRvv4L-y5vfK-G42tdqbLHR0",
+      authDomain: "f1-gaming.firebaseapp.com",
+      projectId: "f1-gaming",
+      storageBucket: "f1-gaming.firebasestorage.app",
+      messagingSenderId: "948996937129",
+      appId: "1:948996937129:web:fd683a3c607dc8e4e2e0b8",
+      measurementId: "G-3C0WNYQD73"
+    };
+
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : defaultFirebaseConfig;
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'f1-gaming-rpg';
+
+    window.gameDb = db;
+    window.gameAuth = auth;
+    window.gameAppId = appId;
+    
+    // 暴露 Firestore 方法與全域對象
+    window.gameDoc = doc;
+    window.gameGetDoc = getDoc;
+    window.gameSetDoc = setDoc;
+    window.gameDeleteDoc = deleteDoc;
+
+    // 啟動時先進行安全匿名登入（Rule 3）
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Firebase Anonymous Auth Error: ", err);
+      }
+    };
+    initAuth();
+
+    // 註冊與登入模擬，使用 /artifacts/{appId}/public/data/accounts 進行安全數據映射
+    window.registerStudentAccount = async (studentId, password, classCode, studentNo, studentName) => {
+      const cleanId = studentId.trim().toLowerCase();
+      if (!auth.currentUser) {
+        await initAuth();
+      }
+
+      const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', cleanId);
+      const docSnap = await getDoc(accountRef);
+      if (docSnap.exists()) {
+        throw new Error("account-exists");
+      }
+
+      const initialProfile = {
+        studentId: cleanId,
+        password: password,
+        studentName: studentName.trim(),
+        classCode: classCode,
+        studentNo: studentNo,
+        score: 0,
+        gold: 200, // 初始贈送金幣
+        job: "🛡️ 聖騎士", // 預設職業
+        inventory: {
+          potion: 1,
+          scroll: 1,
+          elixir: 0
+        },
+        clearedChapters: [], // 用於精密追蹤已通關的章節
+        clearedChaptersCount: 0,
+        lastPlayed: new Date().toISOString()
+      };
+
+      await setDoc(accountRef, initialProfile);
+      return { profile: initialProfile };
+    };
+
+    window.loginStudentAccount = async (studentId, password) => {
+      const cleanId = studentId.trim().toLowerCase();
+      if (!auth.currentUser) {
+        await initAuth();
+      }
+
+      const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', cleanId);
+      const docSnap = await getDoc(accountRef);
+      if (!docSnap.exists()) {
+        throw new Error("user-not-found");
+      }
+
+      const profile = docSnap.data();
+      if (profile.password !== password) {
+        throw new Error("wrong-password");
+      }
+
+      return { profile };
+    };
+
+    // 刪除帳戶雲端數據
+    window.cloudDeleteAccount = async (studentId) => {
+      const cleanId = studentId.trim().toLowerCase();
+      const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', cleanId);
+      const leaderRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', cleanId);
+      await deleteDoc(accountRef);
+      await deleteDoc(leaderRef);
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        window.loadCloudLeaderboard();
+      }
+    });
+
+    // 儲存進度數據
+    window.saveStudentData = async (studentId, studentName, classCode, studentNo, score, clearedChapters, gold, job, inventory) => {
+      if (!auth.currentUser) return;
+      const cleanId = studentId.trim().toLowerCase();
+      try {
+        const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', cleanId);
+        await setDoc(accountRef, {
+          score,
+          clearedChapters,
+          clearedChaptersCount: clearedChapters.length,
+          gold,
+          job,
+          inventory,
+          lastPlayed: new Date().toISOString()
+        }, { merge: true });
+
+        // 英雄榜同步 (保存通關記錄以在榜上標註 👑 勳章)
+        const leaderRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', cleanId);
+        await setDoc(leaderRef, {
+          studentId: cleanId,
+          studentName,
+          classCode,
+          studentNo,
+          score,
+          clearedChapters, 
+          clearedChaptersCount: clearedChapters.length,
+          lastPlayed: new Date().toISOString()
+        }, { merge: true });
+
+        window.loadCloudLeaderboard();
+      } catch (err) {
+        console.error("Failed to write to Firestore:", err);
+      }
+    };
+
+    window.loadCloudLeaderboard = () => {
+      try {
+        const leadersCol = collection(db, 'artifacts', appId, 'public', 'data', 'leaderboard');
+        onSnapshot(leadersCol, (snapshot) => {
+          let list = [];
+          snapshot.forEach((d) => {
+            list.push(d.data());
+          });
+          list.sort((a, b) => b.score - a.score);
+
+          const listEl = document.getElementById('leaderboard-list');
+          const detailListEl = document.getElementById('detailed-leaderboard-list');
+          
+          const renderList = (element) => {
+            if (element) {
+              element.innerHTML = '';
+              list.forEach((item, index) => {
+                const li = document.createElement('li');
+                li.className = "flex justify-between items-center text-xs py-2 border-b border-slate-800 text-slate-300";
+                
+                // 判斷該玩家是否通關了終極魔王 (Chapter 7)
+                const clearedList = item.clearedChapters || [];
+                const hasWonFinalBoss = clearedList.includes(7);
+                const crownSymbol = hasWonFinalBoss ? '<span class="text-amber-400 font-bold ml-1">👑</span>' : '';
+
+                li.innerHTML = `
+                  <div class="flex flex-col">
+                    <span class="font-bold text-amber-400 flex items-center gap-1">
+                      #${index + 1} ${item.classCode} (${item.studentNo}) ${item.studentName}${crownSymbol}
+                    </span>
+                    <span class="text-[10px] text-emerald-400 font-medium">⚔️ 已通關: ${item.clearedChaptersCount || 0} 章</span>
+                  </div>
+                  <span class="font-mono text-amber-500 font-bold ml-auto">${item.score} pts</span>
+                `;
+                element.appendChild(li);
+              });
+              if (list.length === 0) {
+                element.innerHTML = '<li class="text-xs text-slate-500 py-3 text-center">尚無冒險勇者紀錄</li>';
+              }
+            }
+          };
+          renderList(listEl);
+          renderList(detailListEl);
+        }, (err) => {
+          console.error("Leaderboard Snapshot error:", err);
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    };
+  </script>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col justify-between overflow-x-hidden p-3 md:p-6 select-none">
+
+  <!-- Background Flash Layer for damage -->
+  <div id="screen-flash" class="fixed inset-0 pointer-events-none z-50"></div>
+
+  <!-- Dynamic floating feedback message container -->
+  <div id="toast-container" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 pointer-events-none flex flex-col gap-2"></div>
+
+  <!-- 1. LOGIN SCREEN -->
+  <div id="login-screen" class="fixed inset-0 bg-slate-950 z-40 flex items-center justify-center p-4">
+    <div class="relative max-w-md w-full bg-[#0a0f1d] border border-purple-500/30 rounded-3xl p-6 md:p-8 shadow-2xl overflow-hidden glowing-border">
+      
+      <div class="absolute -top-16 -left-16 w-36 h-36 bg-purple-600/10 rounded-full blur-3xl"></div>
+      <div class="absolute -bottom-16 -right-16 w-36 h-36 bg-purple-600/10 rounded-full blur-3xl"></div>
+      
+      <div class="text-center relative z-10 mb-6">
+        <span class="inline-block px-3 py-1 bg-purple-950/50 border border-purple-800/40 text-purple-300 rounded-full text-xs font-bold mb-3 tracking-wider">
+          學生登入帳號系統
+        </span>
+        <h2 id="login-title-h" class="text-3xl font-black text-white tracking-wide">數理勇者登入</h2>
+        <p id="login-subtitle-p" class="text-xs text-slate-400 mt-2">請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存</p>
+      </div>
+
+      <div class="space-y-4 relative z-10">
+        <div>
+          <label class="block text-xs font-bold text-slate-400 mb-1.5">學生學號 / 帳號</label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
+              <svg class="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path>
+              </svg>
+            </span>
+            <input type="text" id="login-id-input" placeholder="例如：s12345" class="w-full bg-[#030712] border border-slate-800 focus:border-purple-500 rounded-xl pl-10 pr-4 py-3 outline-none text-slate-100 transition-colors text-sm font-medium">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-400 mb-1.5">密碼</label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
+              <svg class="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path>
+              </svg>
+            </span>
+            <input type="password" id="login-pw-input" placeholder="請輸入最少6位數密碼" class="w-full bg-[#030712] border border-slate-800 focus:border-purple-500 rounded-xl pl-10 pr-4 py-3 outline-none text-slate-100 transition-colors text-sm font-medium">
+          </div>
+        </div>
+
+        <!-- Additional Registration Fields -->
+        <div id="registration-fields" class="hidden space-y-4 pt-1 border-t border-slate-800/60 mt-2">
+          <div>
+            <label class="block text-xs font-bold text-purple-400 mb-1.5">選擇班別 (Class)</label>
+            <select id="reg-class" class="w-full bg-[#030712] border border-slate-800 focus:border-purple-500 text-slate-200 rounded-xl px-4 py-3 outline-none text-sm transition-colors">
+              <option value="1A">1A</option>
+              <option value="1B">1B</option>
+              <option value="1C">1C</option>
+              <option value="1D">1D</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-purple-400 mb-1.5">班內座號 (Class Number)</label>
+            <input type="number" id="reg-student-no" min="1" max="45" placeholder="例如: 18" class="w-full bg-[#030712] border border-slate-800 focus:border-purple-500 text-slate-200 rounded-xl px-4 py-3 outline-none text-sm transition-colors">
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-purple-400 mb-1.5">英文名字 (English Name)</label>
+            <input type="text" id="reg-student-name" placeholder="Alex Chan" class="w-full bg-[#030712] border border-slate-800 focus:border-purple-500 text-slate-200 rounded-xl px-4 py-3 outline-none text-sm capitalize transition-colors">
+          </div>
+        </div>
+
+        <div class="space-y-3 pt-3">
+          <button id="primary-action-btn" onclick="executeAuthentication()" class="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-sm rounded-xl transition-all shadow-lg shadow-purple-600/10 active:scale-[0.98]">
+            開始冒險 (登入)
+          </button>
+          
+          <button id="secondary-toggle-btn" onclick="toggleRegistrationMode()" class="w-full py-3 bg-transparent text-slate-300 hover:text-white border border-slate-800 hover:border-purple-500/50 rounded-xl transition-all text-sm font-bold active:scale-[0.98]">
+            註冊新勇者帳號
+          </button>
+        </div>
+
+        <p class="text-[10px] text-slate-500 text-center leading-relaxed mt-4 pt-2">
+          * 只要使用同一個學號登入，遊戲進度（LV、積分、通關紀錄）將會自動儲存在雲端！
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. MAP SELECTION SCREEN -->
+  <div id="map-screen" class="hidden fixed inset-0 bg-slate-950/98 z-30 overflow-y-auto p-3 md:p-6 flex flex-col justify-between">
+    <div class="max-w-6xl w-full mx-auto">
+      
+      <!-- HEADER PANEL -->
+      <header class="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-slate-950/90 border border-slate-800/80 p-5 rounded-2xl shadow-xl mb-6 relative z-10">
+        <div class="flex-grow">
+          <h2 class="text-2xl md:text-3xl font-black text-slate-100 tracking-wide font-sans">選擇冒險秘境</h2>
+          <p class="text-xs md:text-sm font-semibold text-amber-500 mt-2 flex items-center gap-1.5">
+            🎯 任務目標：擊敗所有 6 大秘境，解鎖終極魔王，拯救數理世界！
+          </p>
+        </div>
+        
+        <!-- Interactive Buttons Bar -->
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="openJobSelection()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-purple-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors">
+            👤 重選職業
+          </button>
+          <button onclick="openShopModal()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-amber-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors text-amber-300">
+            🏪 冒險商店
+          </button>
+          <button onclick="openGrimoireModal()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-indigo-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors text-indigo-300">
+            📖 數學秘籍
+          </button>
+          <button onclick="openLeaderboardModal()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors text-slate-300">
+            📊 排行榜
+          </button>
+          <button onclick="triggerManualUpload()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-emerald-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors text-emerald-400">
+            ☁️ 上傳分數
+          </button>
+          <button onclick="confirmAccountDeletion()" class="px-3.5 py-2 bg-slate-900 hover:bg-red-950/40 border border-red-900/50 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors text-red-400">
+            👤- 註銷帳號
+          </button>
+          <button onclick="executeLogout()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-rose-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors text-rose-400">
+            [-> 登出
+          </button>
+        </div>
+      </header>
+
+      <!-- Current Profile Details Badge -->
+      <div class="mb-5 flex flex-wrap gap-2 items-center justify-between bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+        <span id="player-profile-badge" class="px-3 py-1 bg-slate-950 border border-slate-800 text-xs rounded-xl text-slate-300 font-bold">
+          冒險者: <span id="profile-class" class="text-amber-400">--</span> (<span id="profile-no">--</span>) <span id="profile-name">載入中...</span>
+        </span>
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-bold text-purple-400">當前職業: <span id="profile-job" class="text-slate-100">--</span></span>
+          <span class="text-xs font-bold text-amber-500">💰 金幣: <span id="profile-gold" class="text-slate-100 font-mono">0</span></span>
+          <span class="text-xs font-bold text-indigo-400">⭐ 冒險等級: <span id="profile-level" class="text-slate-100 font-mono">LV 1</span></span>
+        </div>
+      </div>
+
+      <!-- Chapter Grid (Clean HTML Rendering, 1-6 Fully unlocked initially) -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-6">
+        <!-- Ch 1: 代數序列之森 -->
+        <button id="ch-card-1" onclick="startAdventure(1)" class="bg-slate-900/50 border border-slate-800/80 hover:border-emerald-500/50 p-5 rounded-2xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between group active:scale-[0.98] hover:bg-slate-900/80">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">第一章 🌲</span>
+              <span class="text-xs text-slate-400 font-bold">LV 1 🧭</span>
+            </div>
+            <h3 class="text-lg font-black text-slate-100 group-hover:text-emerald-300 transition-colors flex justify-between items-center">
+              <span>代數序列之森</span>
+              <span class="clear-badge hidden text-emerald-400 text-sm font-bold">✅ 已通關</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">挑戰森林數列規律，求通項 T<sub>n</sub> 數值及完成高階遞迴關係之試煉。</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
+            <span class="text-[11px] text-emerald-400 font-bold flex items-center gap-1">👾 序列魔靈護衛</span>
+            <span class="text-[10px] text-slate-500">Stages: 3 關卡</span>
+          </div>
+        </button>
+
+        <!-- Ch 2: 天平解方程之塔 -->
+        <button id="ch-card-2" onclick="startAdventure(2)" class="bg-slate-900/50 border border-slate-800/80 hover:border-purple-500/50 p-5 rounded-2xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between group active:scale-[0.98] hover:bg-slate-900/80">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">第二章 ⚖️</span>
+              <span class="text-xs text-slate-400 font-bold">LV 2 🧭</span>
+            </div>
+            <h3 class="text-lg font-black text-slate-100 group-hover:text-purple-300 transition-colors flex justify-between items-center">
+              <span>天平解方程之塔</span>
+              <span class="clear-badge hidden text-purple-400 text-sm font-bold">✅ 已通關</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">解開 Level 1 括號方程，挑戰 Level 2 繁複雙項分式之天平解方程巨塔。</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
+            <span class="text-[11px] text-purple-400 font-bold flex items-center gap-1">👾 天平方程石像</span>
+            <span class="text-[10px] text-slate-500">Stages: 3 關卡</span>
+          </div>
+        </button>
+
+        <!-- Ch 3: 百分率黃金城 -->
+        <button id="ch-card-3" onclick="startAdventure(3)" class="bg-slate-900/50 border border-slate-800/80 hover:border-rose-500/50 p-5 rounded-2xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between group active:scale-[0.98] hover:bg-slate-900/80">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">第三章 💰</span>
+              <span class="text-xs text-slate-400 font-bold">LV 3 🧭</span>
+            </div>
+            <h3 class="text-lg font-black text-slate-100 group-hover:text-rose-300 transition-colors flex justify-between items-center">
+              <span>百分率黃金城</span>
+              <span class="clear-badge hidden text-rose-400 text-sm font-bold">✅ 已通關</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed font-sans">破解盈利、成本、折算、賺率等單一與雙重逆向商業百分法難題。</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-rose-950/60 w-full">
+            <span class="text-[11px] text-rose-400 font-bold flex items-center gap-1">👾 模仿金幣寶箱</span>
+            <span class="text-[10px] text-slate-500">Stages: 3 關卡</span>
+          </div>
+        </button>
+
+        <!-- Ch 4: 近似值與估算之谷 -->
+        <button id="ch-card-4" onclick="startAdventure(4)" class="bg-slate-900/50 border border-slate-800/80 hover:border-amber-500/50 p-5 rounded-2xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between group active:scale-[0.98] hover:bg-slate-900/80">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">第四章 📐</span>
+              <span class="text-xs text-slate-400 font-bold">LV 4 🧭</span>
+            </div>
+            <h3 class="text-lg font-black text-slate-100 group-hover:text-amber-300 transition-colors flex justify-between items-center">
+              <span>近似值與估算之谷</span>
+              <span class="clear-badge hidden text-amber-400 text-sm font-bold">✅ 已通關</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">掌握精確四捨五入、無條件上下捨入、小數位與有效數字定位幻術。</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
+            <span class="text-[11px] text-amber-400 font-bold flex items-center gap-1">👾 估算幻獸護衛</span>
+            <span class="text-[10px] text-slate-500">Stages: 3 關卡</span>
+          </div>
+        </button>
+
+        <!-- Ch 5: 多項式秩序之殿 (UNLOCKED BY DEFAULT) -->
+        <button id="ch-card-5" onclick="startAdventure(5)" class="bg-slate-900/50 border border-slate-800/80 hover:border-indigo-500/50 p-5 rounded-2xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between group active:scale-[0.98] hover:bg-slate-900/80">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">第五章 🎒</span>
+              <span class="text-xs text-slate-400 font-bold">LV 5 🧭</span>
+            </div>
+            <h3 class="text-lg font-black text-slate-100 group-hover:text-indigo-300 transition-colors flex justify-between items-center">
+              <span>多項式秩序之殿</span>
+              <span class="clear-badge hidden text-indigo-400 text-sm font-bold">✅ 已通關</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">整理代數！精準判定多項式的最高次數、常數項、同類項與複雜代數係數。</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
+            <span class="text-[11px] text-indigo-400 font-bold flex items-center gap-1">👾 多項式守衛</span>
+            <span class="text-[10px] text-slate-500">Stages: 3 關卡</span>
+          </div>
+        </button>
+
+        <!-- Ch 6: 直角坐標變幻幻境 (UNLOCKED BY DEFAULT) -->
+        <button id="ch-card-6" onclick="startAdventure(6)" class="bg-slate-900/50 border border-slate-800/80 hover:border-blue-500/50 p-5 rounded-2xl text-left transition-all hover:scale-[1.02] flex flex-col justify-between group active:scale-[0.98] hover:bg-slate-900/80">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">第六章 🔮</span>
+              <span class="text-xs text-slate-400 font-bold">LV 5 🧭</span>
+            </div>
+            <h3 class="text-lg font-black text-slate-100 group-hover:text-blue-300 transition-colors flex justify-between items-center">
+              <span>直角坐標變幻幻境</span>
+              <span class="clear-badge hidden text-blue-400 text-sm font-bold">✅ 已通關</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed font-sans">破除空間迷障！熟練計算坐標平移、沿對稱軸反射與繞原點 180° 旋轉。</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-slate-800/60 w-full">
+            <span class="text-[11px] text-blue-400 font-bold flex items-center gap-1">👾 坐標反射幻影</span>
+            <span class="text-[10px] text-slate-500">Stages: 3 關卡</span>
+          </div>
+        </button>
+
+        <!-- Ch 7: 混沌魔皇之境 (終極考驗 - 需通關第一至六章) -->
+        <button id="ch-card-7" onclick="startAdventure(7)" class="col-span-1 md:col-span-2 lg:col-span-3 relative bg-slate-950 border border-slate-900 opacity-60 p-5 rounded-2xl text-left transition-all flex flex-col justify-between group" disabled>
+          <div id="chapter7-lock" class="absolute inset-0 bg-slate-950/90 rounded-2xl flex flex-col items-center justify-center text-center p-3 z-10 transition-all">
+            <span class="text-3xl mb-1">💀</span>
+            <span class="text-sm font-black text-red-500 tracking-wider">混沌魔皇之境 (封印中)</span>
+            <span id="chapter7-lock-reason" class="text-xs text-slate-500 mt-1">需先通關第一至六章方能解除封印</span>
+          </div>
+          <div class="relative z-0 w-full">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] uppercase font-bold text-red-500 bg-red-500/10 px-2 py-0.5 rounded-md font-mono flex items-center gap-1">終極考驗 ☠️</span>
+              <span class="text-xs text-red-500 font-bold">限制：解鎖需要通關第 1 至 6 章</span>
+            </div>
+            <h3 class="text-xl font-black text-red-400 flex justify-between items-center">
+              <span>混沌魔皇之境</span>
+              <span class="clear-badge hidden text-amber-400 text-sm font-bold">🏆 已擊破</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-2 max-w-3xl">此處由數理世界的混沌霸主鎮守。題目將在所有前置章節中隨機交叉產生，魔皇具備強大的生命汲取能力，考驗你的一切中一數學真本領！</p>
+          </div>
+          <div class="flex justify-between items-center mt-5 pt-3 border-t border-red-950/60 w-full relative z-0">
+            <span class="text-[11px] text-red-500 font-bold flex items-center gap-1">👿 數理終極混沌魔皇</span>
+            <span class="text-[10px] text-slate-500">Stages: 2 關卡</span>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats & Mini Leaderboard at Bottom -->
+    <div class="max-w-6xl w-full mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-900/40 p-5 rounded-2xl border border-slate-850 mt-4">
+      <div>
+        <h4 class="text-xs font-bold text-amber-400 mb-2 uppercase tracking-wider">🌟 您的冒險數據統計</h4>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+            <div class="text-[10px] text-slate-500 uppercase">總累積得分</div>
+            <div id="map-total-score" class="text-xl font-bold text-amber-500 font-mono">0</div>
+          </div>
+          <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+            <div class="text-[10px] text-slate-500 uppercase">討伐首領數</div>
+            <div id="map-cleared-chapters" class="text-xl font-bold text-red-500 font-mono">0 / 6</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h4 class="text-xs font-bold text-amber-400 mb-2 uppercase tracking-wider font-sans">🏆 冒險勇者榜</h4>
+        <ul id="leaderboard-list" class="space-y-1 max-h-32 overflow-y-auto pr-2">
+          <li class="text-xs text-slate-500 text-center py-2">載入中...</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. GAME PLAYING INTERACTIVE INTERFACE -->
+  <div id="game-playing-panel" class="hidden flex-grow flex flex-col justify-between">
+    <header class="w-full max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-2xl backdrop-blur-md mb-4 mt-2">
+      <div>
+        <h1 class="text-xl md:text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 rpg-font flex items-center gap-2">
+          <span>⚔️</span> 中一數學魔域大冒險
+        </h1>
+        <p class="text-xs text-slate-400 mt-0.5" id="running-student-badge">冒險者: 載入中...</p>
+      </div>
+      
+      <div class="flex items-center gap-3">
+        <button onclick="toggleMute()" id="mute-btn" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 transition-all rounded-xl text-xs flex items-center gap-1.5 border border-slate-700">
+          <span id="mute-icon">🔊</span> <span id="mute-text">音效開啟</span>
+        </button>
+        <button onclick="exitToMap()" class="px-3.5 py-1.5 bg-slate-800 hover:bg-red-950/60 text-rose-400 hover:text-rose-300 active:scale-95 transition-all rounded-xl text-xs flex items-center gap-1.5 border border-slate-700">
+          🗺️ 返回地圖
+        </button>
+      </div>
+    </header>
+
+    <!-- 4. MAIN ACTION THEATER -->
+    <main class="w-full max-w-4xl mx-auto flex-grow grid grid-cols-1 md:grid-cols-4 gap-4 items-stretch mb-4">
+      
+      <section class="md:col-span-3 bg-slate-900/40 border border-slate-800 rounded-3xl p-4 md:p-6 flex flex-col justify-between shadow-2xl relative overflow-hidden backdrop-blur-md">
+        
+        <!-- Health, Combos, Scores -->
+        <div class="grid grid-cols-3 gap-2 items-center mb-4 bg-slate-950/80 p-3 rounded-2xl border border-slate-800/80">
+          <div>
+            <div class="flex justify-between items-center mb-1 text-xs">
+              <span class="text-green-400 font-bold">💖 勇者 HP</span>
+              <span id="player-hp-text" class="font-mono text-[10px] md:text-xs">1000/1000</span>
+            </div>
+            <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden border border-slate-700">
+              <div id="player-hp-bar" class="bg-gradient-to-r from-emerald-500 to-green-400 h-full transition-all duration-300" style="width: 100%;"></div>
+            </div>
+          </div>
+
+          <div class="flex flex-col items-center justify-center">
+            <div id="combo-badge" class="scale-90 opacity-40 px-2 py-0.5 bg-indigo-900/60 text-indigo-300 rounded-full text-[10px] font-bold border border-indigo-700/50 flex items-center gap-1 transition-all">
+              🔥 <span id="combo-count">0</span> COMBO
+            </div>
+          </div>
+
+          <div class="col-span-1 text-right">
+            <div class="text-[9px] text-slate-500 uppercase">Score / Stage</div>
+            <div class="text-xs md:text-sm font-black text-amber-400 font-mono">
+              <span id="score-text">0</span> pts / <span id="stage-text">1-1</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Battle field -->
+        <div id="battle-field" class="flex flex-col items-center justify-center min-h-[160px] md:min-h-[185px] relative mb-4 rounded-2xl bg-gradient-to-b from-slate-950/80 to-slate-900/60 p-4 border border-slate-800">
+          <div id="effect-container" class="absolute inset-0 pointer-events-none z-10 flex items-center justify-center"></div>
+
+          <div class="w-full max-w-xs text-center z-10 mb-3">
+            <div class="flex justify-between items-baseline mb-1">
+              <span id="monster-name" class="font-black text-red-400 text-xs md:text-sm drop-shadow-lg">魔物</span>
+              <span id="monster-hp-text" class="text-[10px] font-mono text-slate-400">500/500</span>
+            </div>
+            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700">
+              <div id="monster-hp-bar" class="bg-gradient-to-r from-red-500 to-rose-600 h-full transition-all duration-300" style="width: 100%;"></div>
+            </div>
+          </div>
+
+          <div id="monster-sprite-container" class="w-20 h-20 md:w-24 md:h-24 flex items-center justify-center transition-all duration-300 transform">
+            <svg id="monster-svg" viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_10px_15px_rgba(239,68,68,0.4)]">
+            </svg>
+          </div>
+        </div>
+
+        <!-- MathJax Equation box -->
+        <div class="bg-slate-950/90 border border-slate-800/80 rounded-2xl p-4 md:p-5 mb-4 relative min-h-[90px] flex flex-col justify-center items-center shadow-inner">
+          <span class="absolute top-2 left-3 text-[9px] text-amber-500/60 uppercase font-mono tracking-widest">Question Formula</span>
+          <div id="question-text" class="text-sm md:text-base font-bold text-center text-slate-100 leading-relaxed px-2 mt-2">
+            載入挑戰試煉中...
+          </div>
+        </div>
+
+        <!-- Choices -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3" id="options-grid">
+          <button onclick="checkAnswer(0)" class="option-btn text-left p-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl transition-all font-semibold active:scale-[0.98] focus:outline-none flex items-center justify-between group">
+            <span class="bg-slate-950 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px] mr-3 group-hover:text-amber-400">A</span>
+            <span class="option-content flex-grow text-xs md:text-sm">選項載入中...</span>
+          </button>
+          <button onclick="checkAnswer(1)" class="option-btn text-left p-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl transition-all font-semibold active:scale-[0.98] focus:outline-none flex items-center justify-between group">
+            <span class="bg-slate-950 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px] mr-3 group-hover:text-amber-400">B</span>
+            <span class="option-content flex-grow text-xs md:text-sm">選項載入中...</span>
+          </button>
+          <button onclick="checkAnswer(2)" class="option-btn text-left p-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl transition-all font-semibold active:scale-[0.98] focus:outline-none flex items-center justify-between group">
+            <span class="bg-slate-950 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px] mr-3 group-hover:text-amber-400">C</span>
+            <span class="option-content flex-grow text-xs md:text-sm">選項載入中...</span>
+          </button>
+          <button onclick="checkAnswer(3)" class="option-btn text-left p-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl transition-all font-semibold active:scale-[0.98] focus:outline-none flex items-center justify-between group">
+            <span class="bg-slate-950 text-slate-500 font-mono px-2 py-0.5 rounded text-[10px] mr-3 group-hover:text-amber-400">D</span>
+            <span class="option-content flex-grow text-xs md:text-sm">選項載入中...</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Combat Inventory Sidebar (Right side in game) -->
+      <section class="md:col-span-1 bg-slate-950/80 border border-slate-850 p-4 rounded-3xl flex flex-col justify-between">
+        <div>
+          <h3 class="text-xs font-bold text-amber-400 border-b border-slate-800 pb-2 mb-3 flex items-center gap-1.5">
+            🎒 戰術隨身背包
+          </h3>
+          <p class="text-[11px] text-slate-400 mb-4 leading-relaxed">點擊藥劑於本回合即時釋放魔法加成：</p>
+          
+          <div class="space-y-3">
+            <!-- Potion Item -->
+            <button onclick="usePotionItem()" class="w-full bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-green-500/30 p-3 rounded-xl flex items-center justify-between transition-all">
+              <div class="flex items-center gap-2.5">
+                <span class="text-lg">🧪</span>
+                <div class="text-left">
+                  <div class="text-xs font-bold text-slate-200">生命藥水</div>
+                  <div class="text-[10px] text-slate-400">恢復 300 HP</div>
+                </div>
+              </div>
+              <span id="inv-potion-qty" class="bg-slate-950 px-2 py-1 rounded text-xs font-mono font-bold text-green-400">x0</span>
+            </button>
+
+            <!-- Scroll Item -->
+            <button onclick="useScrollItem()" class="w-full bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/30 p-3 rounded-xl flex items-center justify-between transition-all">
+              <div class="flex items-center gap-2.5">
+                <span class="text-lg">📜</span>
+                <div class="text-left">
+                  <div class="text-xs font-bold text-slate-200">智慧卷軸</div>
+                  <div class="text-[10px] text-slate-400">排除一個錯誤答案</div>
+                </div>
+              </div>
+              <span id="inv-scroll-qty" class="bg-slate-950 px-2 py-1 rounded text-xs font-mono font-bold text-indigo-400">x0</span>
+            </button>
+
+            <!-- Elixir Item -->
+            <button onclick="useElixirItem()" class="w-full bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-orange-500/30 p-3 rounded-xl flex items-center justify-between transition-all">
+              <div class="flex items-center gap-2.5">
+                <span class="text-lg">⚡</span>
+                <div class="text-left">
+                  <div class="text-xs font-bold text-slate-200">力量藥劑</div>
+                  <div class="text-[10px] text-slate-400">下一擊傷害提升 1.5x</div>
+                </div>
+              </div>
+              <span id="inv-elixir-qty" class="bg-slate-950 px-2 py-1 rounded text-xs font-mono font-bold text-orange-400">x0</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-slate-900/40 p-3 rounded-xl border border-slate-850 mt-4 text-[10px] text-slate-500 leading-relaxed">
+          💡 戰法提示：智慧卷軸可直接令答題錯誤概率下降！可在地圖頂部「冒險商店」購買補充藥劑。
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- MODALS -->
+
+  <!-- Job Selection Modal -->
+  <div id="job-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border border-purple-500/40 rounded-3xl p-6 max-w-lg w-full shadow-2xl relative">
+      <div class="text-center mb-6">
+        <h3 class="text-xl font-bold text-purple-400">👤 選擇勇者職業</h3>
+        <p class="text-xs text-slate-400 mt-1">更換您的職業，獲得獨家被動戰略屬性！</p>
+      </div>
+
+      <div class="grid grid-cols-1 gap-3 mb-6">
+        <!-- Warrior/Paladin -->
+        <button onclick="selectJobAction('🛡️ 聖騎士')" class="bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-purple-500/50 p-4 rounded-2xl text-left transition-all flex items-start gap-3">
+          <span class="text-2xl mt-1">🛡️</span>
+          <div>
+            <h4 class="text-sm font-bold text-white">聖騎士 (Paladin)</h4>
+            <p class="text-xs text-slate-400 mt-1">擁有更高的信仰防線。**生命上限大幅提升至 1300 HP**（預設為 1000）。</p>
+          </div>
+        </button>
+
+        <!-- Mage -->
+        <button onclick="selectJobAction('🔮 魔導士')" class="bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-purple-500/50 p-4 rounded-2xl text-left transition-all flex items-start gap-3">
+          <span class="text-2xl mt-1">🔮</span>
+          <div>
+            <h4 class="text-sm font-bold text-white">魔導士 (Mage)</h4>
+            <p class="text-xs text-slate-400 mt-1">精通數理魔力公式。對敵方魔物造成的**基礎法術傷害提升 30%**。</p>
+          </div>
+        </button>
+
+        <!-- Archer -->
+        <button onclick="selectJobAction('🏹 神射手')" class="bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-purple-500/50 p-4 rounded-2xl text-left transition-all flex items-start gap-3">
+          <span class="text-2xl mt-1">🏹</span>
+          <div>
+            <h4 class="text-sm font-bold text-white">神射手 (Archer)</h4>
+            <p class="text-xs text-slate-400 mt-1">精準射擊，百步穿楊。答對題目時有 **25% 的高機率觸發 2.0x 暴擊傷害**。</p>
+          </div>
+        </button>
+      </div>
+      
+      <button onclick="closeJobSelection()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-all">
+        取消
+      </button>
+    </div>
+  </div>
+
+  <!-- Shop Modal -->
+  <div id="shop-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 max-w-lg w-full shadow-2xl">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+        <div>
+          <h3 class="text-lg font-bold text-amber-400">🏪 冒險商店</h3>
+          <p class="text-xs text-slate-400 mt-0.5">利用平日答題獲得的金幣購入強力補給！</p>
+        </div>
+        <div class="text-right">
+          <div class="text-[10px] text-slate-500">持有金幣</div>
+          <div class="text-lg font-bold text-amber-400 font-mono">💰 <span id="shop-gold-display">0</span></div>
+        </div>
+      </div>
+
+      <div class="space-y-3 mb-6">
+        <!-- Item 1 Potion -->
+        <div class="bg-slate-950 p-3 rounded-xl border border-slate-850 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">🧪</span>
+            <div>
+              <h4 class="text-xs font-bold text-slate-200">生命藥水</h4>
+              <p class="text-[10px] text-slate-400">戰場即時補血 300 HP</p>
+            </div>
+          </div>
+          <button onclick="buyShopItem('potion', 50)" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded-lg active:scale-95 transition-all">
+            購買 (50💰)
+          </button>
+        </div>
+
+        <!-- Item 2 Scroll -->
+        <div class="bg-slate-950 p-3 rounded-xl border border-slate-850 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">📜</span>
+            <div>
+              <h4 class="text-xs font-bold text-slate-200">智慧卷軸</h4>
+              <p class="text-[10px] text-slate-400">戰場消除 1 個錯誤選項</p>
+            </div>
+          </div>
+          <button onclick="buyShopItem('scroll', 100)" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded-lg active:scale-95 transition-all">
+            購買 (100💰)
+          </button>
+        </div>
+
+        <!-- Item 3 Elixir -->
+        <div class="bg-slate-950 p-3 rounded-xl border border-slate-850 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">⚡</span>
+            <div>
+              <h4 class="text-xs font-bold text-slate-200">力量藥劑</h4>
+              <p class="text-[10px] text-slate-400">下一擊傷害加成 1.5 倍</p>
+            </div>
+          </div>
+          <button onclick="buyShopItem('elixir', 150)" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded-lg active:scale-95 transition-all">
+            購買 (150💰)
+          </button>
+        </div>
+      </div>
+
+      <button onclick="closeShopModal()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-all">
+        關閉商店
+      </button>
+    </div>
+  </div>
+
+  <!-- Grimoire Modal -->
+  <div id="grimoire-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border border-indigo-500/40 rounded-3xl p-6 max-w-xl w-full shadow-2xl flex flex-col justify-between max-h-[85vh]">
+      <div class="border-b border-slate-800 pb-3 mb-4">
+        <h3 class="text-lg font-bold text-indigo-400">📖 數理魔法秘籍</h3>
+        <p class="text-xs text-slate-400 mt-0.5">出征前熟記公式，可抵禦高階魔獸的突襲！</p>
+      </div>
+
+      <div class="space-y-4 overflow-y-auto pr-2 mb-6 flex-grow">
+        <!-- Ch 1 -->
+        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第一章：代數序列之森</h4>
+          <p class="text-xs text-slate-300 leading-relaxed font-sans">
+            - 數列通項（一般項） T<sub>n</sub>：將項數 n 代入公式直接計算所得值。<br>
+            - 遞迴關係式：需以前項 a<sub>n</sub> 帶出後項 a<sub>n+1</sub>（例如：a<sub>n+1</sub> = a<sub>n</sub> + d）。
+          </p>
+        </div>
+
+        <!-- Ch 2 -->
+        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第二章：天平解方程之塔</h4>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            - 移項原理：正變負、負變正、乘變除、除變乘。<br>
+            - 先乘除後加減，解括號時使用分配律：a(b + c) = ab + ac。
+          </p>
+        </div>
+
+        <!-- Ch 3 -->
+        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第三章：百分率黃金城</h4>
+          <p class="text-xs text-slate-300 leading-relaxed font-sans">
+            - 售價 (Selling Price) = 成本 (Cost) × (1 + 賺率)<br>
+            - 售價 = 標價 (Marked Price) × (1 - 折扣)
+          </p>
+        </div>
+
+        <!-- Ch 4 -->
+        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第四章：近似值與估算之谷</h4>
+          <p class="text-xs text-slate-300 leading-relaxed font-sans">
+            - 四捨五入看目標位後一位 (0-4 捨，5-9 入)。<br>
+            - 有效數字由第一個變換非零數字向後算起。
+          </p>
+        </div>
+
+        <!-- Ch 5 -->
+        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第五章：多項式秩序之殿</h4>
+          <p class="text-xs text-slate-300 leading-relaxed font-sans">
+            - 次數 (Degree)：最高次項最高次冪的指數。<br>
+            - 常數項 (Constant)：不包含未知數的純數字項。<br>
+            - 係數 (Coefficient)：項前方乘上的常數值（帶正負號）。
+          </p>
+        </div>
+
+        <!-- Ch 6 -->
+        <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-850">
+          <h4 class="text-xs font-bold text-amber-400 mb-1.5">第六章：直角坐報變幻幻境</h4>
+          <p class="text-xs text-slate-300 leading-relaxed font-sans">
+            - 平移：向上/右加，向下/左減。<br>
+            - 沿 x 軸反射變 (x, -y)，沿 y 軸反射變 (-x, y)。<br>
+            - 繞原點旋轉 180° 變 (-x, -y)。
+          </p>
+        </div>
+      </div>
+
+      <button onclick="closeGrimoireModal()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-all">
+        合上秘籍
+      </button>
+    </div>
+  </div>
+
+  <!-- Large Detailed Leaderboard Modal -->
+  <div id="leaderboard-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl">
+      <div class="border-b border-slate-800 pb-3 mb-4 text-center">
+        <h3 class="text-lg font-bold text-amber-400">🏆 雲端榮譽榜</h3>
+        <p class="text-xs text-slate-400">目前魔法王國所有學生的累積總排行</p>
+      </div>
+
+      <ul id="detailed-leaderboard-list" class="space-y-1 max-h-72 overflow-y-auto pr-2 mb-6">
+        <li class="text-xs text-slate-500 text-center py-4">正在聆聽星辰召喚排行...</li>
+      </ul>
+
+      <button onclick="closeLeaderboardModal()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-all">
+        關閉英雄榜
+      </button>
+    </div>
+  </div>
+
+  <!-- Delete Account Confirmation Modal -->
+  <div id="delete-modal" class="fixed inset-0 bg-black/95 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border-2 border-red-600 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center">
+      <span class="text-4xl block mb-2">⚠️</span>
+      <h3 class="text-lg font-bold text-red-500">高危險警告：註銷帳號</h3>
+      <p class="text-xs text-slate-300 mt-2 leading-relaxed">
+        此操作將完全從雲端抹除您的角色存檔（包括所有積分、通關紀錄及金幣），此過程不可逆。
+      </p>
+      
+      <div class="mt-6 space-y-2">
+        <button onclick="executeAccountDeletion()" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl active:scale-95 transition-all text-xs">
+          確認，永久摧毀角色
+        </button>
+        <button onclick="closeAccountDeletion()" class="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-all text-xs">
+          取消
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Explanation Modal on Mistakes -->
+  <div id="explanation-modal" class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border-2 border-red-500/80 rounded-3xl p-6 max-w-lg w-full shadow-2xl relative shake-anim">
+      <div class="flex items-center gap-3 text-red-500 font-black text-base md:text-lg mb-3">
+        <span>🛡️</span> 遭到魔獸防禦反擊 & 吸血恢復！
+      </div>
+      <div id="error-alert-text" class="text-xs text-slate-300 mb-3 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+        很遺憾，你的答案是錯誤的。怪物同時汲取了你部分體能（+15 HP）回復自身！
+      </div>
+      <div class="text-[10px] text-amber-500 font-bold mb-1 uppercase tracking-widest">💡 戰術解讀 (解題步驟)：</div>
+      <div id="modal-step-content" class="bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-100 overflow-y-auto max-h-56 mb-5 text-xs md:text-sm leading-relaxed font-mono">
+      </div>
+      <button onclick="closeExplanation()" class="w-full py-3 bg-red-600 hover:bg-red-500 text-slate-100 font-bold rounded-xl transition-all active:scale-[0.98] text-xs md:text-sm">
+        吸取教訓，重整旗鼓
+      </button>
+    </div>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div id="gameover-modal" class="fixed inset-0 bg-black/95 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border-2 border-amber-500 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl text-center">
+      <h2 id="end-title" class="text-2xl md:text-3xl font-extrabold text-amber-400 rpg-font mb-2">🏆 戰役大捷！</h2>
+      <p id="end-subtitle" class="text-xs text-slate-400 mb-5">您成功的保衛了中一數學王國！</p>
+      
+      <div class="bg-slate-950 border border-slate-800 rounded-2xl p-4 mb-5 space-y-2.5">
+        <div class="flex justify-between items-center text-xs">
+          <span class="text-slate-400">當前章節所得分數</span>
+          <span id="end-score" class="text-base font-mono font-bold text-amber-400">0 pts</span>
+        </div>
+        <div class="flex justify-between items-center text-xs">
+          <span class="text-slate-400">正確解答題數</span>
+          <span id="end-correct" class="text-base font-bold text-green-400">0 / 0 題</span>
+        </div>
+        <div class="flex justify-between items-center text-xs">
+          <span class="text-slate-500">獲得金幣獎勵</span>
+          <span id="end-gold-earned" class="text-base font-bold text-amber-500">+0 💰</span>
+        </div>
+      </div>
+
+      <button onclick="exitToMap()" class="w-full py-3.5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-sm rounded-xl transition-all active:scale-[0.98]">
+        🗺️ 返回魔法王國地圖
+      </button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script>
+    // 🔮 UI 狀態切換與全域狀態變數
+    window.isRegisteringMode = false;
+
+    window.switchLoginRole = function(isTeacher) {
+      const tabStudent = document.getElementById('tab-student');
+      const tabTeacher = document.getElementById('tab-teacher');
+      const roleBadge = document.getElementById('role-badge');
+      const loginTitle = document.getElementById('login-title-h');
+      const loginSubtitle = document.getElementById('login-subtitle-p');
+      const labelId = document.getElementById('label-id');
+      const loginIdInput = document.getElementById('login-id-input');
+      const primaryBtn = document.getElementById('primary-action-btn');
+      const secondaryBtn = document.getElementById('secondary-toggle-btn');
+      const regFields = document.getElementById('registration-fields');
+
+      isRegisteringMode = false;
+      if (regFields) regFields.classList.add('hidden');
+
+      if (isTeacher) {
+        showToast("⚠️ 已移除教師端功能，僅支援勇者登入挑戰！", false);
+        switchLoginRole(false);
+      } else {
+        if (tabStudent) tabStudent.className = "py-2 text-xs font-bold rounded-lg transition-all text-white bg-purple-950/60 border border-purple-800/40";
+        if (roleBadge) roleBadge.innerText = "學生登入帳號系統";
+        if (loginTitle) loginTitle.innerText = "數理勇者登入";
+        if (loginSubtitle) loginSubtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
+        if (labelId) labelId.innerText = "學生學號 / 帳號";
+        if (loginIdInput) loginIdInput.placeholder = "例如：s12345";
+        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
+        if (secondaryBtn) secondaryBtn.classList.remove('hidden'); // 學生展示註冊
+      }
+    };
+
+    window.toggleRegistrationMode = function() {
+      window.isRegisteringMode = !window.isRegisteringMode;
+      const regFields = document.getElementById('registration-fields');
+      const title = document.getElementById('login-title-h');
+      const subtitle = document.getElementById('login-subtitle-p');
+      const primaryBtn = document.getElementById('primary-action-btn');
+      const secondaryBtn = document.getElementById('secondary-toggle-btn');
+      const divRegClass = document.getElementById('div-reg-class');
+      const divRegStudentNo = document.getElementById('div-reg-student-no');
+      const labelRegStudentName = document.getElementById('label-reg-student-name');
+      const regStudentName = document.getElementById('reg-student-name');
+
+      if (window.isRegisteringMode) {
+        if (regFields) regFields.classList.remove('hidden');
+        if (divRegClass) divRegClass.classList.remove('hidden');
+        if (divRegStudentNo) divRegStudentNo.classList.remove('hidden');
+        if (labelRegStudentName) labelRegStudentName.innerText = "英文名字 (English Name)";
+        if (regStudentName) regStudentName.placeholder = "Alex Chan";
+        if (title) title.innerText = "新勇者帳號註冊";
+        if (subtitle) subtitle.innerText = "請輸入學號，並詳細填寫班別與姓名資訊以建立新存檔";
+        if (primaryBtn) primaryBtn.innerText = "建立角色並選擇職業";
+        if (secondaryBtn) secondaryBtn.innerText = "返回登入畫面";
+      } else {
+        if (regFields) regFields.classList.add('hidden');
+        if (title) title.innerText = "數理勇者登入";
+        if (subtitle) subtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
+        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
+        if (secondaryBtn) secondaryBtn.innerText = "註冊新勇者帳號";
+      }
+    };
+
+    window.switchLoginRole = switchLoginRole;
+    window.toggleRegistrationMode = toggleRegistrationMode;
+  </script>
+
+  <!-- Complete Core Game Logic & Event Handling Script -->
+  <script>
+    // 💡 僅在此處聲明一次全域遊戲狀態變數，徹底杜絕 SyntaxError 衝突！
+    window.currentStudent = {
+      studentId: "",
+      name: "",
+      classCode: "",
+      studentNo: "",
+      score: 0,
+      gold: 200,
+      job: "🛡️ 聖騎士",
+      inventory: {
+        potion: 1,
+        scroll: 1,
+        elixir: 0
+      },
+      clearedChapters: [], 
+      clearedCount: 0
+    };
+
+    window.currentChapter = 1;
+    window.playerHP = 1000;
+    window.maxPlayerHP = 1000;
+    window.monsterHP = 500;
+    window.monsterMaxHP = 500;
+    window.combo = 0;
+    window.chapterScore = 0;
+    window.currentStage = 1; 
+    window.correctAnswersInChapter = 0;
+    window.currentQuestionData = null;
+    window.activeElixirApplied = false; 
+
+    // Audio Web API
+    let audioCtx = null;
+    let isMuted = false;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function toggleMute() {
+      isMuted = !isMuted;
+      const muteText = document.getElementById('mute-text');
+      const muteIcon = document.getElementById('mute-icon');
+      if (isMuted) {
+        if (muteText) muteText.innerText = "音效關閉";
+        if (muteIcon) muteIcon.innerText = "🔇";
+      } else {
+        if (muteText) muteText.innerText = "音效開啟";
+        if (muteIcon) muteIcon.innerText = "🔊";
+        initAudio();
+      }
+    }
+
+    function playSound(type) {
+      if (isMuted) return;
+      initAudio();
+      const now = audioCtx.currentTime;
+
+      switch (type) {
+        case 'correct':
+          {
+            const osc1 = audioCtx.createOscillator();
+            const osc2 = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(523.25, now); 
+            osc1.frequency.setValueAtTime(659.25, now + 0.08); 
+            osc1.frequency.setValueAtTime(783.99, now + 0.16); 
+            osc2.type = 'triangle';
+            osc2.frequency.setValueAtTime(261.63, now); 
+            gainNode.gain.setValueAtTime(0.15, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+            osc1.connect(gainNode);
+            osc2.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc1.start(now);
+            osc2.start(now);
+            osc1.stop(now + 0.35);
+            osc2.stop(now + 0.35);
+          }
+          break;
+
+        case 'wrong':
+          {
+            const oscW1 = audioCtx.createOscillator();
+            const oscW2 = audioCtx.createOscillator();
+            const gainW = audioCtx.createGain();
+            oscW1.type = 'sawtooth';
+            oscW1.frequency.setValueAtTime(146.83, now); 
+            oscW1.frequency.exponentialRampToValueAtTime(80, now + 0.3);
+            oscW2.type = 'triangle';
+            oscW2.frequency.setValueAtTime(155.56, now); 
+            gainW.gain.setValueAtTime(0.25, now);
+            gainW.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+            oscW1.connect(gainW);
+            oscW2.connect(gainW);
+            gainW.connect(audioCtx.destination);
+            oscW1.start(now);
+            oscW2.start(now);
+            oscW1.stop(now + 0.35);
+            oscW2.stop(now + 0.35);
+          }
+          break;
+
+        case 'hit':
+          {
+            const bufferSize = audioCtx.sampleRate * 0.12;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+              data[i] = Math.random() * 2 - 1;
+            }
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const noiseFilter = audioCtx.createBiquadFilter();
+            noiseFilter.type = 'lowpass';
+            noiseFilter.frequency.setValueAtTime(900, now);
+            noiseFilter.frequency.exponentialRampToValueAtTime(120, now + 0.12);
+            const noiseGain = audioCtx.createGain();
+            noiseGain.gain.setValueAtTime(0.35, now);
+            noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+            noise.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(audioCtx.destination);
+            noise.start(now);
+            noise.stop(now + 0.12);
+          }
+          break;
+
+        case 'lifesteal':
+          {
+            const oscL = audioCtx.createOscillator();
+            const gainL = audioCtx.createGain();
+            oscL.type = 'sine';
+            oscL.frequency.setValueAtTime(220, now);
+            oscL.frequency.linearRampToValueAtTime(880, now + 0.4);
+            gainL.gain.setValueAtTime(0.01, now);
+            gainL.gain.linearRampToValueAtTime(0.12, now + 0.2);
+            gainL.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+            oscL.connect(gainL);
+            gainL.connect(audioCtx.destination);
+            oscL.start(now);
+            oscL.stop(now + 0.4);
+          }
+          break;
+
+        case 'victory':
+          {
+            const n = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50];
+            n.forEach((freq, i) => {
+              const osc = audioCtx.createOscillator();
+              const g = audioCtx.createGain();
+              osc.type = 'sine';
+              osc.frequency.setValueAtTime(freq, now + i * 0.07);
+              g.gain.setValueAtTime(0.12, now + i * 0.07);
+              g.gain.exponentialRampToValueAtTime(0.01, now + i * 0.07 + 0.25);
+              osc.connect(g);
+              g.connect(audioCtx.destination);
+              osc.start(now + i * 0.07);
+              osc.stop(now + i * 0.07 + 0.25);
+            });
+          }
+          break;
+      }
+    }
+
+    // Submit LogIn or SignUp Authentication
+    async function executeAuthentication() {
+      const studentIdInput = document.getElementById('login-id-input').value.trim();
+      const passwordInput = document.getElementById('login-pw-input').value;
+
+      if (!studentIdInput || !passwordInput) {
+        showToast("⚠️ 請輸入帳號與密碼！", false);
+        return;
+      }
+      if (passwordInput.length < 6) {
+        showToast("⚠️ 密碼最少需要 6 位數！", false);
+        return;
+      }
+
+      showToast("🧙‍♂️ 正在連結魔法水晶...", true);
+
+      if (isRegisteringMode) {
+        const classCode = document.getElementById('reg-class').value;
+        const studentNo = document.getElementById('reg-student-no').value.trim();
+        const studentName = document.getElementById('reg-student-name').value.trim();
+
+        if (!studentNo || !studentName) {
+          showToast("⚠️ 請填寫班內座號與英文姓名！", false);
+          return;
+        }
+
+        try {
+          const result = await window.registerStudentAccount(studentIdInput, passwordInput, classCode, studentNo, studentName);
+          showToast("🎉 註冊成功！新勇者誕生！", true);
+          loadLoggedProfile(result.profile);
+          openJobSelection(); 
+        } catch (err) {
+          if (err.message === "account-exists") {
+            showToast("❌ 該學號帳戶已被佔用！", false);
+          } else {
+            showToast(`❌ 註冊失敗: ${err.message}`, false);
+          }
+        }
+      } else {
+        try {
+          const result = await window.loginStudentAccount(studentIdInput, passwordInput);
+          showToast("⚔️ 歡迎回來，數理勇者！", true);
+          loadLoggedProfile(result.profile);
+        } catch (err) {
+          if (err.message === "user-not-found") {
+            showToast("❌ 帳戶不存在，請先點擊註冊！", false);
+          } else if (err.message === "wrong-password") {
+            showToast("❌ 密碼不確！", false);
+          } else {
+            showToast(`❌ 登入失敗: ${err.message}`, false);
+          }
+        }
+      }
+    }
+
+    function loadLoggedProfile(profile) {
+      window.currentStudent.studentId = profile.studentId;
+      window.currentStudent.name = profile.studentName || "無名勇者";
+      window.currentStudent.classCode = profile.classCode || "1A";
+      window.currentStudent.studentNo = profile.studentNo || "00";
+      window.currentStudent.score = profile.score || 0;
+      window.currentStudent.gold = profile.gold !== undefined ? profile.gold : 200;
+      window.currentStudent.job = profile.job || "🛡️ 聖騎士";
+      window.currentStudent.inventory = profile.inventory || { potion: 1, scroll: 1, elixir: 0 };
+      window.currentStudent.clearedChapters = profile.clearedChapters || [];
+      window.currentStudent.clearedCount = window.currentStudent.clearedChapters.length;
+
+      document.getElementById('profile-class').innerText = window.currentStudent.classCode;
+      document.getElementById('profile-no').innerText = window.currentStudent.studentNo;
+      document.getElementById('profile-name').innerText = window.currentStudent.name;
+      const runningBadge = document.getElementById('running-student-badge');
+      if (runningBadge) {
+        runningBadge.innerText = `冒險者: ${window.currentStudent.classCode} (${window.currentStudent.studentNo}) ${window.currentStudent.name}`;
+      }
+
+      window.syncProfileToMapUI();
+
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('map-screen').classList.remove('hidden');
+      playSound('victory');
+    }
+
+    // 🎯 FIXED: Correctly unlocks Chapter 7 (Final Boss) once Chapters 1, 2, 3, 4, 5, 6 are cleared, using correct HTML ID "ch-card-7"
+    function syncProfileToMapUI() {
+      const levelVal = Math.floor(window.currentStudent.score / 1000) + 1;
+      
+      document.getElementById('map-total-score').innerText = window.currentStudent.score;
+      document.getElementById('map-cleared-chapters').innerText = `${window.currentStudent.clearedChapters.length} / 6`;
+      
+      document.getElementById('profile-job').innerText = window.currentStudent.job;
+      document.getElementById('profile-gold').innerText = window.currentStudent.gold;
+      document.getElementById('profile-level').innerText = `LV ${levelVal}`;
+
+      // Chapter Checkmarks and Styling Updates (Emerald highlight on clear)
+      for (let ch = 1; ch <= 7; ch++) {
+        const card = document.getElementById(`ch-card-${ch}`);
+        if (card) {
+          const isCleared = window.currentStudent.clearedChapters.includes(ch);
+          const badge = card.querySelector('.clear-badge');
+          if (isCleared) {
+            card.classList.remove('border-slate-800/80', 'bg-slate-900/50');
+            card.classList.add('border-emerald-500/50', 'bg-emerald-950/20', 'glowing-border');
+            if (badge) badge.classList.remove('hidden');
+          } else {
+            card.classList.add('border-slate-800/80', 'bg-slate-900/50');
+            card.classList.remove('border-emerald-500/50', 'bg-emerald-950/20', 'glowing-border');
+            if (badge) badge.classList.add('hidden');
+          }
+        }
+      }
+
+      // Unlock Final Boss (Ch 7) once first 6 Chapters (1 to 6) are completed, using correct ID ch-card-7
+      const ch7Btn = document.getElementById('ch-card-7');
+      const ch7Lock = document.getElementById('chapter7-lock');
+      const ch7LockReason = document.getElementById('chapter7-lock-reason');
+      
+      const allChaptersCleared = [1, 2, 3, 4, 5, 6].every(ch => window.currentStudent.clearedChapters.includes(ch));
+      
+      if (allChaptersCleared) {
+        if (ch7Btn) { ch7Btn.disabled = false; ch7Btn.classList.remove('opacity-60'); }
+        if (ch7Lock) { ch7Lock.classList.add('hidden'); }
+      } else {
+        if (ch7Btn) { ch7Btn.disabled = true; ch7Btn.classList.add('opacity-60'); }
+        if (ch7Lock) { ch7Lock.classList.remove('hidden'); }
+        
+        const missing = [1, 2, 3, 4, 5, 6].filter(ch => !window.currentStudent.clearedChapters.includes(ch));
+        if (ch7LockReason) {
+          ch7LockReason.innerText = "需先通關前六章方能解除封印！尚餘：" + missing.map(m => "第" + m + "章").join('、');
+        }
+      }
+    }
+
+    window.syncProfileToMapUI = syncProfileToMapUI;
+
+    function triggerManualUpload() {
+      showToast("🔮 正在詠唱雲端儲存魔法...", true);
+      window.saveStudentData(
+        window.currentStudent.studentId,
+        window.currentStudent.name,
+        window.currentStudent.classCode,
+        window.currentStudent.studentNo,
+        window.currentStudent.score,
+        window.currentStudent.clearedChapters,
+        window.currentStudent.gold,
+        window.currentStudent.job,
+        window.currentStudent.inventory
+      );
+      setTimeout(() => {
+        showToast("✨ 數據已成功存檔至雲端古籍！", true);
+      }, 800);
+    }
+
+    function openJobSelection() { document.getElementById('job-modal').classList.remove('hidden'); }
+    function closeJobSelection() { document.getElementById('job-modal').classList.add('hidden'); }
+    function selectJobAction(jobName) {
+      window.currentStudent.job = jobName;
+      showToast(`👤 已轉職成為 ${jobName}！`, true);
+      closeJobSelection();
+      window.syncProfileToMapUI();
+      window.saveStudentData(
+        window.currentStudent.studentId, window.currentStudent.name, window.currentStudent.classCode, window.currentStudent.studentNo,
+        window.currentStudent.score, window.currentStudent.clearedChapters, window.currentStudent.gold, window.currentStudent.job, window.currentStudent.inventory
+      );
+    }
+
+    function openShopModal() {
+      document.getElementById('shop-gold-display').innerText = window.currentStudent.gold;
+      document.getElementById('shop-modal').classList.remove('hidden');
+    }
+    function closeShopModal() { document.getElementById('shop-modal').classList.add('hidden'); }
+    function buyShopItem(itemKey, cost) {
+      if (window.currentStudent.gold < cost) {
+        showToast("⚠️ 餘額不足！請多打怪挑戰以積累金幣。", false);
+        return;
+      }
+      window.currentStudent.gold -= cost;
+      window.currentStudent.inventory[itemKey] = (window.currentStudent.inventory[itemKey] || 0) + 1;
+      document.getElementById('shop-gold-display').innerText = window.currentStudent.gold;
+      showToast(`🏪 成功購入 1 個補給！`, true);
+      window.syncProfileToMapUI();
+      window.saveStudentData(
+        window.currentStudent.studentId, window.currentStudent.name, window.currentStudent.classCode, window.currentStudent.studentNo,
+        window.currentStudent.score, window.currentStudent.clearedChapters, window.currentStudent.gold, window.currentStudent.job, window.currentStudent.inventory
+      );
+    }
+
+    function openGrimoireModal() { document.getElementById('grimoire-modal').classList.remove('hidden'); }
+    function closeGrimoireModal() { document.getElementById('grimoire-modal').classList.add('hidden'); }
+
+    function openLeaderboardModal() { document.getElementById('leaderboard-modal').classList.remove('hidden'); }
+    function closeLeaderboardModal() { document.getElementById('leaderboard-modal').classList.add('hidden'); }
+
+    function executeLogout() {
+      showToast("🚪 已安全退出冒險會所", true);
+      document.getElementById('map-screen').classList.add('hidden');
+      document.getElementById('login-screen').classList.remove('hidden');
+    }
+
+    function confirmAccountDeletion() { document.getElementById('delete-modal').classList.remove('hidden'); }
+    function closeAccountDeletion() { document.getElementById('delete-modal').classList.add('hidden'); }
+    async function executeAccountDeletion() {
+      try {
+        showToast("💥 正在毀滅雲端印記...", false);
+        await window.cloudDeleteAccount(window.currentStudent.studentId);
+        document.getElementById('delete-modal').classList.add('hidden');
+        document.getElementById('map-screen').classList.add('hidden');
+        document.getElementById('login-screen').classList.remove('hidden');
+        showToast("💀 帳號已被徹底摧毀！", false);
+      } catch (err) {
+        showToast(`❌ 註銷失敗: ${err.message}`, false);
+      }
+    }
+
+    function getBossName(chapter, bossIdx) {
+      if (chapter === 7) return bossIdx === 1 ? "數理混沌魔皇 [分身]" : "👑 數理終極混沌魔皇";
+      const names = [
+        ["代數序列魔靈 [護衛]", "代數序列魔靈 [精英]", "代數序列魔王 [領主]"],
+        ["天平方程石像 [護衛]", "天平方程石像 [精英]", "天平方程魔王 [領主]"],
+        ["利潤寶箱怪 [護衛]", "利潤寶箱怪 [精英]", "利潤財寶魔王 [領主]"],
+        ["估算時空幻獸 [護衛]", "估算時空幻獸 [精英]", "估算時空魔王 [領主]"],
+        ["多項式秩序守衛 [護衛]", "多項式秩序守衛 [精英]", "多項式秩序魔王 [領主]"],
+        ["坐報反射幻影 [護衛]", "坐報反射幻影 [精英]", "直角坐標魔王 [領主]"]
+      ];
+      return names[chapter - 1][bossIdx - 1];
+    }
+
+    function startAdventure(chapterNum) {
+      window.currentChapter = chapterNum;
+      window.combo = 0;
+      window.chapterScore = 0;
+      window.currentStage = 1; 
+      window.correctAnswersInChapter = 0;
+      window.activeElixirApplied = false;
+
+      if (window.currentStudent.job === "🛡️ 聖騎士") window.maxPlayerHP = 1300;
+      else window.maxPlayerHP = 1000;
+      window.playerHP = window.maxPlayerHP;
+
+      window.monsterMaxHP = 300 + (chapterNum * 50);
+      if (chapterNum === 7) window.monsterMaxHP = 1000; 
+      window.monsterHP = window.monsterMaxHP;
+
+      document.getElementById('monster-name').innerText = getBossName(chapterNum, 1);
+
+      const monsterColors = ["#10b981", "#6366f1", "#f97316", "#14b8a6", "#d946ef", "#0ea5e9", "#ef4444"];
+      const svgContainer = document.getElementById('monster-svg');
+      if (svgContainer) {
+        svgContainer.innerHTML = generateMonsterSVG(chapterNum, monsterColors[window.currentChapter - 1]);
+      }
+
+      document.getElementById('map-screen').classList.add('hidden');
+      document.getElementById('game-playing-panel').classList.remove('hidden');
+      
+      updateCombatUI();
+      loadNextQuestion();
+    }
+
+    function exitToMap() {
+      document.getElementById('map-screen').classList.remove('hidden');
+      document.getElementById('game-playing-panel').classList.add('hidden');
+      document.getElementById('gameover-modal').classList.add('hidden');
+      document.getElementById('explanation-modal').classList.add('hidden');
+      window.syncProfileToMapUI();
+    }
+
+    function generateMonsterSVG(ch, color) {
+      if (ch === 7) {
+        return `
+          <g fill="${color}">
+            <polygon points="50,15 25,45 75,45" />
+            <rect x="35" y="45" width="30" height="30" rx="4" />
+            <polygon points="20,25 35,35 25,50" />
+            <polygon points="80,25 65,35 75,50" />
+            <circle cx="42" cy="55" r="4" fill="#ff0000" />
+            <circle cx="58" cy="55" r="4" fill="#ff0000" />
+            <polygon points="35,15 20,5 30,22" fill="#7f1d1d" />
+            <polygon points="65,15 80,5 70,22" fill="#7f1d1d" />
+          </g>
+        `;
+      }
+      return `
+        <g fill="${color}">
+          <circle cx="50" cy="50" r="28" />
+          <polygon points="15,40 5,20 30,30" />
+          <polygon points="85,40 95,20 70,30" />
+          <circle cx="40" cy="45" r="4" fill="#fff" />
+          <circle cx="40" cy="45" r="2.2" fill="#000" />
+          <circle cx="60" cy="45" r="4" fill="#fff" />
+          <circle cx="60" cy="45" r="2.2" fill="#000" />
+          <rect x="42" y="60" width="16" height="4" rx="2" fill="#fff" />
+        </g>
+      `;
+    }
+
+    function loadNextQuestion() {
+      const qLevel = (window.currentChapter === 7) ? window.currentStage : ((window.currentStage === 3) ? 2 : 1);
+      window.currentQuestionData = generateMathQuestion(window.currentChapter, qLevel);
+      document.getElementById('question-text').innerHTML = window.currentQuestionData.question;
+
+      const indexes = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+      const buttons = document.querySelectorAll('.option-btn');
+
+      buttons.forEach((btn, i) => {
+        const idx = indexes[i];
+        btn.querySelector('.option-content').innerHTML = window.currentQuestionData.options[idx];
+        btn.setAttribute('data-target-idx', idx);
+        btn.disabled = false;
+        btn.style.opacity = "1";
+      });
+
+      if (window.MathJax) {
+        MathJax.typesetPromise();
+      }
+    }
+
+    function usePotionItem() {
+      if ((window.currentStudent.inventory.potion || 0) <= 0) {
+        showToast("⚠️ 背包中沒有生命藥水！可在商店購買。", false);
+        return;
+      }
+      if (window.playerHP >= window.maxPlayerHP) {
+        showToast("💖 生命值已滿，不需服用！", false);
+        return;
+      }
+      window.currentStudent.inventory.potion--;
+      window.playerHP = Math.min(window.maxPlayerHP, window.playerHP + 300);
+      playSound('correct');
+      createFloatingText("+300 HP 回復", "text-emerald-400 font-black", true);
+      updateCombatUI();
+    }
+
+    function useScrollItem() {
+      if ((window.currentStudent.inventory.scroll || 0) <= 0) {
+        showToast("⚠️ 背包中沒有智慧卷軸！可在商店購買。", false);
+        return;
+      }
+      
+      const buttons = document.querySelectorAll('.option-btn');
+      let excluded = false;
+      
+      for (let btn of buttons) {
+        const targetIdx = parseInt(btn.getAttribute('data-target-idx'));
+        let isCorrectText = (targetIdx === 0);
+
+        if (!isCorrectText && !btn.disabled) {
+          btn.disabled = true;
+          btn.style.opacity = "0.3";
+          btn.querySelector('.option-content').innerText = "⚠️ 智慧排除";
+          excluded = true;
+          break;
+        }
+      }
+
+      if (excluded) {
+        window.currentStudent.inventory.scroll--;
+        playSound('lifesteal');
+        showToast("📜 奧術光環排除了 1 個錯誤答案！", true);
+        updateCombatUI();
+      } else {
+        showToast("⚠️ 畫面上已無多餘錯誤干擾項！", false);
+      }
+    }
+
+    function useElixirItem() {
+      if ((window.currentStudent.inventory.elixir || 0) <= 0) {
+        showToast("⚠️ 背包中沒有力量藥劑！可在商店購買。", false);
+        return;
+      }
+      if (window.activeElixirApplied) {
+        showToast("⚡ 本回合力量藥劑加成已處於激發態！", false);
+        return;
+      }
+      window.currentStudent.inventory.elixir--;
+      window.activeElixirApplied = true;
+      playSound('correct');
+      createFloatingText("⚡ 激發 1.5x 爆發!", "text-orange-400 font-extrabold", true);
+      updateCombatUI();
+    }
+
+    function continuePlayingChapter() {
+      window.playerHP = window.maxPlayerHP;
+      window.monsterMaxHP = Math.floor(window.monsterMaxHP * 1.25); 
+      window.monsterHP = window.monsterMaxHP;
+      window.combo = 0;
+      window.currentStage = 1; 
+      document.getElementById('gameover-modal').classList.add('hidden');
+      showToast("🔥 魔皇復甦！已開啟更高等級挑戰模式！", true);
+      updateCombatUI();
+      loadNextQuestion();
+    }
+
+    function checkAnswer(btnIdx) {
+      const buttons = document.querySelectorAll('.option-btn');
+      const selectedBtn = buttons[btnIdx];
+      const targetIdx = parseInt(selectedBtn.getAttribute('data-target-idx'));
+
+      let isAnswerCorrect = (targetIdx === 0);
+
+      if (isAnswerCorrect) {
+        playSound('hit');
+        setTimeout(() => playSound('correct'), 80);
+
+        window.combo++;
+        window.correctAnswersInChapter++;
+        
+        let dmg = 100 + Math.floor(Math.random() * 50);
+        let criticalMsg = "";
+        
+        if (window.currentStudent.job === "🔮 魔導士") {
+          dmg = Math.floor(dmg * 1.3);
+          criticalMsg = " (法術+30%)";
+        }
+        if (window.currentStudent.job === "🏹 神射手" && Math.random() < 0.25) {
+          dmg = Math.floor(dmg * 2.0);
+          criticalMsg += " [🎯 精準暴擊 2.0x]";
+        }
+        if (window.activeElixirApplied) {
+          dmg = Math.floor(dmg * 1.5);
+          criticalMsg += " [⚡藥劑 1.5x]";
+          window.activeElixirApplied = false; 
+        }
+        
+        if (window.combo >= 3) {
+          dmg = Math.floor(dmg * 1.5);
+          criticalMsg += " (Combo 1.5x)";
+          const heal = Math.floor(window.maxPlayerHP * 0.2);
+          window.playerHP = Math.min(window.maxPlayerHP, window.playerHP + heal);
+          createFloatingText(`+${heal} HP 回復`, "text-green-400 font-extrabold", true);
+        }
+
+        window.monsterHP = Math.max(0, window.monsterHP - dmg);
+        window.chapterScore += 100 + (window.combo * 15);
+        window.currentStudent.gold += 5; 
+
+        createFloatingText(`-${dmg}${criticalMsg}`, "text-red-500 font-black text-lg", false);
+        shakeMonsterSprite();
+
+        const maxStages = (window.currentChapter === 7) ? 2 : 3;
+
+        if (window.monsterHP <= 0) {
+          if (window.currentStage < maxStages) {
+            window.currentStage++;
+            window.monsterMaxHP = 350 + (window.currentChapter * 80) + (window.currentStage * 100);
+            if (window.currentChapter === 7) window.monsterMaxHP = 1000; 
+            window.monsterHP = window.monsterMaxHP;
+            
+            document.getElementById('monster-name').innerText = getBossName(window.currentChapter, window.currentStage);
+            
+            const monsterColors = ["#10b981", "#6366f1", "#f97316", "#14b8a6", "#d946ef", "#0ea5e9", "#ef4444"];
+            const svgContainer = document.getElementById('monster-svg');
+            if (svgContainer) {
+              svgContainer.innerHTML = generateMonsterSVG(window.currentChapter, monsterColors[window.currentChapter - 1]);
+            }
+            
+            createFloatingText("🎉 擊退強敵！下位守護者登場！", "text-amber-400 font-black text-sm", false);
+            updateCombatUI();
+            setTimeout(loadNextQuestion, 900);
+          } else {
+            window.chapterScore += 400; 
+            window.currentStudent.gold += 50; 
+            createFloatingText("🎉 斬殺秘境主宰! +50💰", "text-amber-400 font-black text-xl", false);
+            
+            if (window.currentChapter <= 6) {
+              if (!window.currentStudent.clearedChapters.includes(window.currentChapter)) {
+                window.currentStudent.clearedChapters.push(window.currentChapter);
+              }
+              window.currentStudent.clearedCount = window.currentStudent.clearedChapters.length;
+            }
+            window.currentStudent.score += window.chapterScore;
+
+            window.saveStudentData(
+              window.currentStudent.studentId,
+              window.currentStudent.name,
+              window.currentStudent.classCode,
+              window.currentStudent.studentNo,
+              window.currentStudent.score,
+              window.currentStudent.clearedChapters,
+              window.currentStudent.gold,
+              window.currentStudent.job,
+              window.currentStudent.inventory
+            );
+            showToast("💾 冒險進度已自動儲存至雲端！", true);
+
+            setTimeout(() => {
+              playSound('victory');
+              showGameOverScreen(true);
+            }, 800);
+          }
+          return;
+        }
+
+        updateCombatUI();
+        setTimeout(loadNextQuestion, 700);
+
+      } else {
+        playSound('wrong');
+        window.combo = 0;
+        window.activeElixirApplied = false;
+
+        const playerDmg = 150 + Math.floor(Math.random() * 60);
+        window.playerHP = Math.max(0, window.playerHP - playerDmg);
+        createFloatingText(`-${playerDmg} HP`, "text-rose-500 font-black", true);
+        flashScreenRed();
+
+        const maxStages = (window.currentChapter === 7) ? 2 : 3;
+        const oldHP = window.monsterHP;
+        const healAmt = (window.currentStage === maxStages) ? 25 : 15;
+        window.monsterHP = Math.min(window.monsterMaxHP, window.monsterHP + healAmt);
+        const actualHealed = window.monsterHP - oldHP;
+
+        if (actualHealed > 0) {
+          setTimeout(() => {
+            playSound('lifesteal');
+            createFloatingText(`+${actualHealed} HP 吸血`, "text-green-500 font-black text-xs md:text-sm", false);
+          }, 250);
+        }
+
+        updateCombatUI();
+        showExplanationModal(window.currentQuestionData.explanation);
+
+        if (window.playerHP <= 0) {
+          setTimeout(() => {
+            showGameOverScreen(false);
+          }, 1200);
+        }
+      }
+    }
+
+    function updateCombatUI() {
+      document.getElementById('player-hp-text').innerText = `${window.playerHP}/${window.maxPlayerHP}`;
+      const playerPct = (window.playerHP / window.maxPlayerHP) * 100;
+      const playerBar = document.getElementById('player-hp-bar');
+      if (playerBar) playerBar.style.width = `${playerPct}%`;
+
+      document.getElementById('monster-hp-text').innerText = `${window.monsterHP}/${window.monsterMaxHP}`;
+      const monsterPct = (window.monsterHP / window.monsterMaxHP) * 100;
+      const monsterBar = document.getElementById('monster-hp-bar');
+      if (monsterBar) monsterBar.style.width = `${monsterPct}%`;
+
+      document.getElementById('score-text').innerText = window.chapterScore;
+      document.getElementById('combo-count').innerText = window.combo;
+      
+      let stageTypeStr = "護衛";
+      if (window.currentStage === 2) stageTypeStr = "精英";
+      if (window.currentStage === 3) stageTypeStr = "領主";
+      
+      const maxStages = (window.currentChapter === 7) ? 2 : 3;
+      if (window.currentChapter === 7) {
+        stageTypeStr = (window.currentStage === 1) ? "分身" : "本尊";
+      }
+
+      const stageText = document.getElementById('stage-text');
+      if (stageText) {
+        stageText.innerText = `${window.currentChapter}-${window.currentStage} (${stageTypeStr})`;
+      }
+
+      const invPotionQty = document.getElementById('inv-potion-qty');
+      const invScrollQty = document.getElementById('inv-scroll-qty');
+      const invElixirQty = document.getElementById('inv-elixir-qty');
+      if (invPotionQty) invPotionQty.innerText = `x${window.currentStudent.inventory.potion || 0}`;
+      if (invScrollQty) invScrollQty.innerText = `x${window.currentStudent.inventory.scroll || 0}`;
+      if (invElixirQty) invElixirQty.innerText = `x${window.currentStudent.inventory.elixir || 0}`;
+
+      const comboBadge = document.getElementById('combo-badge');
+      if (comboBadge) {
+        if (window.combo > 0) {
+          comboBadge.classList.remove('opacity-40', 'scale-90');
+          comboBadge.classList.add('scale-100', 'bg-indigo-900');
+        } else {
+          comboBadge.classList.add('opacity-40', 'scale-90');
+          comboBadge.classList.remove('bg-indigo-900');
+        }
+      }
+    }
+
+    function createFloatingText(text, classes, isPlayer = false) {
+      const container = document.getElementById('effect-container');
+      if (!container) return;
+      const el = document.createElement('div');
+      el.className = `absolute float-text-anim font-black pointer-events-none drop-shadow-[0_4px_6px_rgba(0,0,0,0.8)] text-sm md:text-base ${classes}`;
+      el.innerText = text;
+
+      if (isPlayer) {
+        el.style.left = '15%';
+        el.style.top = '30%';
+      } else {
+        el.style.left = '50%';
+        el.style.top = '35%';
+      }
+
+      container.appendChild(el);
+      setTimeout(() => el.remove(), 1500);
+    }
+
+    function triggerMathJaxTypeset() {
+      if (window.MathJax && window.MathJax.typesetPromise) {
+        window.MathJax.typesetPromise();
+      }
+    }
+
+    function shakeMonsterSprite() {
+      const container = document.getElementById('monster-sprite-container');
+      if (container) {
+        container.classList.add('shake-anim');
+        setTimeout(() => container.classList.remove('shake-anim'), 500);
+      }
+    }
+
+    function flashScreenRed() {
+      const fl = document.getElementById('screen-flash');
+      if (fl) {
+        fl.classList.add('flash-red-anim');
+        setTimeout(() => fl.classList.remove('flash-red-anim'), 400);
+      }
+    }
+
+    function showExplanationModal(html) {
+      const stepContent = document.getElementById('modal-step-content');
+      const expModal = document.getElementById('explanation-modal');
+      if (stepContent && expModal) {
+        stepContent.innerHTML = html;
+        expModal.classList.remove('hidden');
+        triggerMathJaxTypeset();
+      }
+    }
+
+    function closeExplanation() {
+      document.getElementById('explanation-modal').classList.add('hidden');
+      if (window.playerHP > 0) {
+        updateCombatUI();
+        loadNextQuestion();
+      }
+    }
+
+    function showGameOverScreen(isVictory) {
+      const modal = document.getElementById('gameover-modal');
+      const title = document.getElementById('end-title');
+      const subtitle = document.getElementById('end-subtitle');
+
+      const goldGained = isVictory ? 50 : 0;
+
+      if (isVictory) {
+        if (title) {
+          title.innerText = "🏆 戰役大捷！";
+          title.className = "text-2xl md:text-3xl font-extrabold text-amber-400 rpg-font mb-2";
+        }
+        if (subtitle) subtitle.innerText = "您成功完成了本章的所有首領試煉，擊敗了終極領主！";
+      } else {
+        if (title) {
+          title.innerText = "💀 戰敗撤退";
+          title.className = "text-2xl md:text-3xl font-extrabold text-red-500 rpg-font mb-2";
+        }
+        if (subtitle) subtitle.innerText = "魔力消耗殆盡...多加回城看詳解練習，下次再來！";
+      }
+
+      const endScore = document.getElementById('end-score');
+      const endCorrect = document.getElementById('end-correct');
+      const endGoldEarned = document.getElementById('end-gold-earned');
+      if (endScore) endScore.innerText = `${window.chapterScore} pts`;
+      if (endCorrect) endCorrect.innerText = `${window.correctAnswersInChapter} 題`;
+      if (endGoldEarned) endGoldEarned.innerText = `+${goldGained} 💰`;
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function showToast(msg, isSuccess = true) {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = `px-4 py-2.5 rounded-xl text-xs font-bold shadow-xl transition-all duration-300 transform translate-y-2 flex items-center gap-2 ${
+        isSuccess ? 'bg-indigo-900 text-purple-300 border border-purple-800' : 'bg-red-950 text-red-300 border border-red-800'
+      }`;
+      toast.innerHTML = `<span>${isSuccess ? '🔮' : '⚠️'}</span> <span>${msg}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-2');
+        toast.classList.add('opacity-0', '-translate-y-2');
+        setTimeout(() => toast.remove(), 400);
+      }, 2500);
+    }
+
+    // 🛠 urge helper functions
+    window.generateDistinctOptions = function(correctVal, deviation, count) {
+      const set = new Set();
+      set.add(correctVal);
+      while (set.size < count) {
+        const randOffset = (Math.floor(Math.random() * 5) + 1) * deviation * (Math.random() < 0.5 ? 1 : -1);
+        let potential = correctVal + randOffset;
+        if (deviation < 1) {
+          potential = parseFloat(potential.toFixed(3));
+        } else {
+          potential = Math.round(potential);
+        }
+        set.add(potential);
+      }
+      return Array.from(set).sort(() => Math.random() - 0.5);
+    };
+
+    window.formatPoly = function(coeff2, coeff1, constVal) {
+      let parts = [];
+      if (coeff2 !== 0) {
+        if (coeff2 === 1) parts.push("x^2");
+        else if (coeff2 === -1) parts.push("-x^2");
+        else parts.push(`${coeff2}x^2`);
+      }
+      if (coeff1 !== 0) {
+        let sign = coeff1 > 0 ? "+" : "-";
+        let val = Math.abs(coeff1) === 1 ? "" : Math.abs(coeff1);
+        if (parts.length > 0) {
+          parts.push(`${sign} ${val}x`);
+        } else {
+          parts.push(`${coeff1 === -1 ? "-" : ""}${val}x`);
+        }
+      }
+      if (constVal !== 0) {
+        let sign = constVal > 0 ? "+" : "-";
+        if (parts.length > 0) {
+          parts.push(`${sign} ${Math.abs(constVal)}`);
+        } else {
+          parts.push(`${constVal}`);
+        }
+      }
+      return parts.join(" ");
+    };
+
+    window.transformPt = function(pt, action) {
+      let nx = pt.x;
+      let ny = pt.y;
+      switch (action.type) {
+        case 'translate':
+          if (action.dir === 'right') nx += action.val;
+          if (action.dir === 'left') nx -= action.val;
+          if (action.dir === 'up') ny += action.val;
+          if (action.dir === 'down') ny -= action.val;
+          break;
+        case 'reflect':
+          if (action.axis === 'x') ny = -ny;
+          if (action.axis === 'y') nx = -nx;
+          break;
+        case 'rotate':
+          if (action.deg === 90) {
+            let temp = nx;
+            nx = ny;
+            ny = -temp;
+          } else if (action.deg === 180) {
+            nx = -nx;
+            ny = -ny;
+          } else if (action.deg === 270) {
+            let temp = nx;
+            nx = -ny;
+            ny = temp;
+          }
+          break;
+      }
+      return { x: nx, y: ny };
+    };
+
+    // Dynamic Math Question Generators strictly adhering to requested level classification
+    window.generateMathQuestion = function(chapterNum, level) {
+      let actualChapter = chapterNum;
+      if (chapterNum === 7) {
+        actualChapter = Math.floor(Math.random() * 6) + 1;
+      }
+
+      switch (actualChapter) {
+        case 1: // Chapter 1: 代數序列之森
+          if (level === 1) {
+            // Lv 1: given a general term, find one of the terms.
+            const a = Math.floor(Math.random() * 7) + 3; // 3-9
+            const b = Math.floor(Math.random() * 12) + 2; // 2-13
+            const isAdd = Math.random() < 0.5;
+            const nVal = Math.floor(Math.random() * 6) + 3; // term 3-8
+            const ans = isAdd ? (a * nVal + b) : (a * nVal - b);
+            const formulaStr = isAdd ? `${a}n + ${b}` : `${a}n - ${b}`;
+
+            const wrong1 = ans + 5;
+            const wrong2 = ans - 5;
+            const wrong3 = isAdd ? (a * (nVal + 1) + b) : (a * (nVal + 1) - b);
+
+            return {
+              question: `已知數列的通項公式為 \\( T_n = ${formulaStr} \\)。求該數列的第 \\( ${nVal} \\) 項 \\( T_{${nVal}} \\) 的數值。`,
+              options: [
+                `\\( T_{${nVal}} = ${ans} \\)`,
+                `\\( T_{${nVal}} = ${wrong1} \\)`,
+                `\\( T_{${nVal}} = ${wrong2} \\)`,
+                `\\( T_{${nVal}} = ${wrong3} \\)`
+              ],
+              answer: 0,
+              explanation: `根據通項公式 \\( T_n = ${formulaStr} \\)，將 \\( n = ${nVal} \\) 代入：<br>` +
+                           `\\( T_{${nVal}} = ${a}(${nVal}) ${isAdd ? '+' : '-'} ${b} \\)<br>` +
+                           `\\( T_{${nVal}} = ${a * nVal} ${isAdd ? '+' : '-'} ${b} = ${ans} \\)。`
+            };
+          } else {
+            // Lv 2: recursive relations
+            const lv2Type = Math.floor(Math.random() * 4);
+            if (lv2Type === 0) {
+              // Find next term
+              const first = Math.floor(Math.random() * 6) + 2;
+              const step = Math.floor(Math.random() * 5) + 3;
+              const seq = [first, first + step, first + step * 2, first + step * 3];
+              const ans = first + step * 4;
+
+              const wrongOpts = generateDistinctOptions(ans, 4, 4).filter(v => v !== ans);
+
+              return {
+                question: `觀察數列的規律： \\( ${seq.join(', ')} , \\dots \\)。求該數列的下一個項的數值。`,
+                options: [
+                  `\\( ${ans} \\)`,
+                  `\\( ${wrongOpts[0]} \\)`,
+                  `\\( ${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `此數列為等差數列，首項為 \\( ${first} \\)，公差為 \\( ${step} \\)。<br>` +
+                             `下一個項即為：\\( ${seq[3]} + ${step} = ${ans} \\)。`
+              };
+            } else if (lv2Type === 1) {
+              // Find general term
+              const step = Math.floor(Math.random() * 4) + 3; // 3-6
+              const offset = Math.floor(Math.random() * 6) + 1; // 1-6
+              const isAdd = Math.random() < 0.5;
+              const seq = [
+                isAdd ? (step + offset) : (step - offset),
+                isAdd ? (step * 2 + offset) : (step * 2 - offset),
+                isAdd ? (step * 3 + offset) : (step * 3 - offset)
+              ];
+              const correctFormula = isAdd ? `${step}n + ${offset}` : `${step}n - ${offset}`;
+              const wrongFormula1 = isAdd ? `${step}n - ${offset}` : `${step}n + ${offset}`;
+              const wrongFormula2 = `${step + 1}n + ${offset}`;
+              const wrongFormula3 = `${step}n`;
+
+              return {
+                question: `已知一數列前三項為 \\( ${seq.join(', ')} \\)。試判斷下列哪一個是此數列的通項公式 \\( T_n \\)？`,
+                options: [
+                  `\\( T_n = ${correctFormula} \\)`,
+                  `\\( T_n = ${wrongFormula1} \\)`,
+                  `\\( T_n = ${wrongFormula2} \\)`,
+                  `\\( T_n = ${wrongFormula3} \\)`
+                ],
+                answer: 0,
+                explanation: `觀察數列各項：<br>` +
+                             `第一項：\\( T_1 = ${seq[0]} \\)<br>` +
+                             `第二項：\\( T_2 = ${seq[1]} \\)<br>` +
+                             `各項之間相差 \\( ${step} \\)，代表公式中包含 \\( ${step}n \\)。<br>` +
+                             `代入 \\( n = 1 \\)，\\( T_1 = ${step}(1) ${isAdd ? '+' : '-'} ${offset} = ${seq[0]} \\)。<br>` +
+                             `因此通項公式為 \\( T_n = ${correctFormula} \\)。`
+              };
+            } else if (lv2Type === 2) {
+              // Recursive relation a_{n+1} = a_n + d
+              const a1 = Math.floor(Math.random() * 4) + 1;
+              const d = Math.floor(Math.random() * 4) + 2;
+              const ans = a1 + d * 3; // a4
+
+              const wrongOpts = generateDistinctOptions(ans, 3, 4).filter(v => v !== ans);
+
+              return {
+                question: `設一遞迴關係數列的首項 \\( a_1 = ${a1} \\)，且對所有正整數 \\( n \\)，滿足 \\( a_{n+1} = a_n + ${d} \\)。求該數列第 4 項 \\( a_4 \\) 的值。`,
+                options: [
+                  `\\( ${ans} \\)`,
+                  `\\( ${wrongOpts[0]} \\)`,
+                  `\\( ${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `依據遞迴關係公式，逐步往後計算各項：<br>` +
+                             `\\( a_1 = ${a1} \\)<br>` +
+                             `\\( a_2 = a_1 + ${d} = ${a1} + ${d} = ${a1 + d} \\)<br>` +
+                             `\\( a_3 = a_2 + ${d} = ${a1 + d} + ${d} = ${a1 + d * 2} \\)<br>` +
+                             `\\( a_4 = a_3 + ${d} = ${a1 + d * 2} + ${d} = ${ans} \\)。`
+              };
+            } else {
+              // Recursive relation a_{n+1} = 2a_n + d
+              const a1 = Math.floor(Math.random() * 3) + 1; // 1-3
+              const d = Math.floor(Math.random() * 4) + 1;  // 1-4
+              const a2 = 2 * a1 + d;
+              const a3 = 2 * a2 + d; // target
+
+              const wrongOpts = generateDistinctOptions(a3, 5, 4).filter(v => v !== a3);
+
+              return {
+                question: `已知遞迴數列中首項 \\( a_1 = ${a1} \\)，且對於正整數 \\( n \\)，滿足關係式 \\( a_{n+1} = 2a_n + ${d} \\)。求該數列第 3 項 \\( a_3 \\) 的值。`,
+                options: [
+                  `\\( ${a3} \\)`,
+                  `\\( ${wrongOpts[0]} \\)`,
+                  `\\( ${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `依據關係式 \\( a_{n+1} = 2a_n + ${d} \\) 逐步遞推求值：<br>` +
+                             `\\( a_1 = ${a1} \\)<br>` +
+                             `\\( a_2 = 2a_1 + ${d} = 2(${a1}) + ${d} = ${a2} \\)<br>` +
+                             `\\( a_3 = 2a_2 + ${d} = 2(${a2}) + ${d} = ${a3} \\)。`
+              };
+            }
+          }
+
+        case 2: // Chapter 2: 天平解方程之塔
+          if (level === 1) {
+            const eqType = Math.random() < 0.5 ? 0 : 1;
+            if (eqType === 0) {
+              // solving equation which need to breaking bracket
+              const x = Math.floor(Math.random() * 8) + 1; // 1-8
+              const a = Math.floor(Math.random() * 5) + 2; // 2-6
+              const b = Math.floor(Math.random() * 6) + 1; // 1-6
+              const isAdd = Math.random() < 0.5;
+              const c = isAdd ? (a * (x + b)) : (a * (x - b));
+              const eqStr = isAdd ? `${a}(x + ${b}) = ${c}` : `${a}(x - ${b}) = ${c}`;
+
+              const wrongOpts = generateDistinctOptions(x, 2, 4).filter(v => v !== x);
+
+              return {
+                question: `解括號方程，清除能量屏障： \\( ${eqStr} \\)。`,
+                options: [
+                  `\\( x = ${x} \\)`,
+                  `\\( x = ${wrongOpts[0]} \\)`,
+                  `\\( x = ${wrongOpts[1]} \\)`,
+                  `\\( x = ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `逐步求解方程 \\( ${eqStr} \\)：<br>` +
+                             `1. 兩邊同時除以括號前方的數值 \\( ${a} \\)：<br>` +
+                             `\\( x ${isAdd ? '+' : '-'} ${b} = ${c / a} \\)<br>` +
+                             `2. 移項，將常數移至等號右側：<br>` +
+                             `\\( x = ${c / a} ${isAdd ? '-' : '+'} ${b} = ${x} \\)。`
+              };
+            } else {
+              // NEW: x/a + b = c
+              const a = Math.floor(Math.random() * 4) + 2; // 2-5
+              const b = Math.floor(Math.random() * 10) + 2; // 2-11
+              const diff = Math.floor(Math.random() * 6) + 2; // c - b (2-7)
+              const c = b + diff;
+              const x = a * diff;
+
+              const wrongOpts = generateDistinctOptions(x, a, 4).filter(v => v !== x);
+
+              return {
+                question: `解含有分母的簡易方程： \\( \\frac{x}{${a}} + ${b} = ${c} \\)。`,
+                options: [
+                  `\\( x = ${x} \\)`,
+                  `\\( x = ${wrongOpts[0]} \\)`,
+                  `\\( x = ${wrongOpts[1]} \\)`,
+                  `\\( x = ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `逐步求解方程 \\( \\frac{x}{${a}} + ${b} = ${c} \\)：<br>` +
+                             `1. 將常數項 \\( ${b} \\) 移項至等號右側：<br>` +
+                             `\\( \\frac{x}{${a}} = ${c} - ${b} \\)<br>` +
+                             `\\( \\frac{x}{${a}} = ${diff} \\)<br>` +
+                             `2. 兩邊同時乘以分母 \\( ${a} \\)：<br>` +
+                             `\\( x = ${diff} \\times ${a} = ${x} \\)。`
+              };
+            }
+          } else {
+            // Level 2: equations with fraction terms
+            const eqType = Math.random() < 0.5 ? 0 : 1;
+            if (eqType === 0) {
+              // (x+a)/2 + (x+c)/3 = e
+              let x = 2, a = 2, c = 4, e = 4;
+              let found = false;
+              for (let attempts = 0; attempts < 1000; attempts++) {
+                let tx = Math.floor(Math.random() * 8) + 1;
+                let ta = Math.floor(Math.random() * 6) + 1;
+                let tc = Math.floor(Math.random() * 6) + 1;
+                if ((5 * tx + 3 * ta + 2 * tc) % 6 === 0) {
+                  x = tx; a = ta; c = tc;
+                  e = (5 * tx + 3 * ta + 2 * tc) / 6;
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) { x = 2; a = 2; c = 4; e = 4; }
+
+              const eqStr = `\\frac{x + ${a}}{2} + \\frac{x + ${c}}{3} = ${e}`;
+              const wrongOpts = generateDistinctOptions(x, 2, 4).filter(v => v !== x);
+
+              return {
+                question: `解複雜分數方程： \\( ${eqStr} \\)。`,
+                options: [
+                  `\\( x = ${x} \\)`,
+                  `\\( x = ${wrongOpts[0]} \\)`,
+                  `\\( x = ${wrongOpts[1]} \\)`,
+                  `\\( x = ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `逐步解分數方程 \\( ${eqStr} \\)：<br>` +
+                             `1. 兩邊同時乘以分母最小公倍數 6 去分母：<br>` +
+                             `\\( 3(x + ${a}) + 2(x + ${c}) = ${e} \\times 6 \\)<br>` +
+                             `\\( 3x + ${3 * a} + 2x + ${2 * c} = ${6 * e} \\)<br>` +
+                             `2. 合併同類項：<br>` +
+                             `\\( 5x + ${3 * a + 2 * c} = ${6 * e} \\)<br>` +
+                             `3. 移項求解：<br>` +
+                             `\\( 5x = ${6 * e - (3 * a + 2 * c)} \\)<br>` +
+                             `\\( x = ${x} \\)。`
+              };
+            } else {
+              // NEW: (x-a)/b - (x-c)/d = e
+              let x = 7, a = 4, b = 3, c = 2, d = 5, e = 1;
+              let found = false;
+              for (let attempts = 0; attempts < 1000; attempts++) {
+                let tx = Math.floor(Math.random() * 15) + 6; // 6 to 20
+                let tb = Math.floor(Math.random() * 4) + 2;  // 2 to 5
+                let td = Math.floor(Math.random() * 4) + 2;  // 2 to 5
+                if (tb === td) continue;
+                let k1 = Math.floor(Math.random() * 3) + 1; // 1 to 3
+                let k2 = Math.floor(Math.random() * 3) + 1; // 1 to 3
+                let ta = tx - k1 * tb;
+                let tc = tx - k2 * td;
+                let te = k1 - k2;
+                if (ta > 0 && tc > 0 && ta !== tc && te !== 0) {
+                  x = tx; b = tb; d = td; a = ta; c = tc; e = te;
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) { x = 10; a = 4; b = 3; c = 2; d = 2; e = -2; }
+
+              const eqStr = `\\frac{x - ${a}}{${b}} - \\frac{x - ${c}}{${d}} = ${e}`;
+              const wrongOpts = generateDistinctOptions(x, 2, 4).filter(v => v !== x);
+
+              const lcm = b * d;
+
+              return {
+                question: `解含有兩個分式相減的方程： \\( ${eqStr} \\)。`,
+                options: [
+                  `\\( x = ${x} \\)`,
+                  `\\( x = ${wrongOpts[0]} \\)`,
+                  `\\( x = ${wrongOpts[1]} \\)`,
+                  `\\( x = ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `逐步解方程 \\( ${eqStr} \\)：<br>` +
+                             `1. 兩邊同時乘以分母的公倍數 \\( ${lcm} \\) 以消去分母：<br>` +
+                             `\\( ${d}(x - ${a}) - ${b}(x - ${c}) = ${e} \\times ${lcm} \\)<br>` +
+                             `\\( ${d}x - ${d * a} - ${b}x + ${b * c} = ${e * lcm} \\)<br>` +
+                             `2. 合併同類項：<br>` +
+                             `\\( (${d} - ${b})x - ${d * a} + ${b * c} = ${e * lcm} \\)<br>` +
+                             `\\( ${d - b}x - ${d * a - b * c} = ${e * lcm} \\)<br>` +
+                             `3. 移項求解：<br>` +
+                             `\\( x = ${x} \\)。`
+              };
+            }
+          }
+
+        case 3: // Chapter 3: 百分率黃金城
+          if (level === 1) {
+            const ch3lv1Type = Math.floor(Math.random() * 4);
+            if (ch3lv1Type === 0) {
+              const cost = (Math.floor(Math.random() * 8) + 3) * 50; 
+              const profitPct = (Math.floor(Math.random() * 3) + 1) * 10; 
+              const sp = cost * (1 + profitPct / 100);
+
+              const wrongOpts = generateDistinctOptions(sp, 20, 4).filter(v => v !== sp);
+
+              return {
+                question: `商人以成本價 \\( \\$${cost} \\) 購入一件防具。若其以 \\( ${profitPct}\\% \\) 的賺率售出，求其 **售價**。`,
+                options: [
+                  `\\( \\$${sp} \\)`,
+                  `\\( \\$${wrongOpts[0]} \\)`,
+                  `\\( \\$${wrongOpts[1]} \\)`,
+                  `\\( \\$${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `根據售價公式： \\( 售價 = 成本 \\times (1 + 賺率) \\)<br>` +
+                             `\\( 售價 = ${cost} \\times (1 + ${profitPct}\\%) = ${cost} \\times ${1 + profitPct/100} = \\$${sp} \\)。`
+              };
+            } else if (ch3lv1Type === 1) {
+              const mp = (Math.floor(Math.random() * 6) + 5) * 100; 
+              const discPct = (Math.floor(Math.random() * 4) + 1) * 10; 
+              const sp = mp * (1 - discPct / 100);
+              const discountStr = ["九", "八", "七", "六"][discPct/10 - 1] + "折";
+
+              const wrongChoices = ["九折", "八折", "七折", "六折"].filter(v => v !== discountStr);
+
+              return {
+                question: `一把神弓標價為 \\( \\$${mp} \\)，現在以優惠價 \\( \\$${sp} \\) 出售。求其折算為華語的 **折扣** 級別。`,
+                options: [
+                  discountStr,
+                  wrongChoices[0],
+                  wrongChoices[1],
+                  wrongChoices[2]
+                ],
+                answer: 0,
+                explanation: `折扣率公式： \\( 折扣百分率 = \\frac{標價 - 售價}{標價} \\times 100\\% \\)<br>` +
+                             `\\( \\frac{${mp} - ${sp}}{${mp}} \\times 100\\% = ${discPct}\\% \\)。<br>` +
+                             `減少原價的 \\( ${discPct}\\% \\) 出售，代表售價是標價的 \\( ${100 - discPct}\\% \\)，即打 **${discountStr}**。`
+              };
+            } else if (ch3lv1Type === 2) {
+              const cost = (Math.floor(Math.random() * 8) + 4) * 20; 
+              const sp = cost + (Math.floor(Math.random() * 5) + 2) * 10;
+              const profit = sp - cost;
+
+              const wrongOpts = generateDistinctOptions(profit, 5, 4).filter(v => v !== profit);
+
+              return {
+                question: `某道具購入成本為 \\( \\$${cost} \\)，隨後以 \\( \\$${sp} \\) 售出。求此交易中商人賺取的 **利潤金額**。`,
+                options: [
+                  `\\( \\$${profit} \\)`,
+                  `\\( \\$${wrongOpts[0]} \\)`,
+                  `\\( \\$${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `利潤公式： \\( 利潤 = 售價 - 成本 \\)<br>` +
+                             `\\( 利潤 = ${sp} - ${cost} = \\$${profit} \\)。`
+              };
+            } else {
+              const cost = (Math.floor(Math.random() * 10) + 5) * 40; 
+              const profitPct = 15; 
+              const profitVal = cost * 0.15;
+
+              const wrongOpts = generateDistinctOptions(profitVal, 10, 4).filter(v => v !== profitVal);
+
+              return {
+                question: `魔法寶石購入成本為 \\( \\$${cost} \\)，以 \\( 15\\% \\) 的賺率賣出。求此筆交易所賺取的 **利潤** 數值。`,
+                options: [
+                  `\\( \\$${profitVal} \\)`,
+                  `\\( ${wrongOpts[0]} \\)`,
+                  `\\( ${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `利潤計算公式： \\( 利潤 = 成本 \\times 賺率 \\)<br>` +
+                             `\\( 利潤 = ${cost} \\times 15\\% = \\$${profitVal} \\)。`
+              };
+            }
+          } else {
+            // Reverse/Double percentage calculations
+            const ch3lv2Type = Math.floor(Math.random() * 4);
+            if (ch3lv2Type === 0) {
+              const cost = (Math.floor(Math.random() * 8) + 2) * 100; 
+              const profitPct = 25; 
+              const sp = cost * 1.25;
+
+              const wrongOpts = generateDistinctOptions(cost, 50, 4).filter(v => v !== cost);
+
+              return {
+                question: `一件稀有法衣以 \\( \\$${sp} \\) 售出，商人從中獲得了 \\( 25\\% \\) 的賺率。求法衣的 **成本**。`,
+                options: [
+                  `\\( \\$${cost} \\)`,
+                  `\\( \\$${wrongOpts[0]} \\)`,
+                  `\\( \\$${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `由售價與賺率求成本的公式： \\( 成本 = \\frac{售價}{1 + 賺率} \\)<br>` +
+                             `\\( 成本 = \\frac{${sp}}{1 + 25\\%} = \\frac{${sp}}{1.25} = \\$${cost} \\)。`
+              };
+            } else if (ch3lv2Type === 1) {
+              const mp = (Math.floor(Math.random() * 10) + 5) * 100; 
+              const sp = mp * 0.8; 
+
+              const wrongOpts = generateDistinctOptions(mp, 50, 4).filter(v => v !== mp);
+
+              return {
+                question: `寵物蛋按標價的 **八折**（即獲得 \\( 20\\% \\) 折扣）出售，特惠售價為 \\( \\$${sp} \\)。求這隻寵物蛋的原 **標價**。`,
+                options: [
+                  `\\( \\$${mp} \\)`,
+                  `\\( \\$${wrongOpts[0]} \\)`,
+                  `\\( \\$${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `由售價與折扣率求標價的公式： \\( 標價 = \\frac{售價}{1 - 折扣百分率} \\)<br>` +
+                             `\\( 標價 = \\frac{${sp}}{80\\%} = \\frac{${sp}}{0.8} = \\$${mp} \\)。`
+              };
+            } else if (ch3lv2Type === 2) {
+              const profit = (Math.floor(Math.random() * 5) + 2) * 15; 
+              const profitPct = 15; 
+              const cost = profit / 0.15;
+
+              const wrongOpts = generateDistinctOptions(cost, 50, 4).filter(v => v !== cost);
+
+              return {
+                question: `已知一件魔法盔甲的利潤金額為 \\( \\$${profit} \\)，賺率為 \\( 15\\% \\)。求其購入 **成本**。`,
+                options: [
+                  `\\( ${cost} \\)`,
+                  `\\( ${wrongOpts[0]} \\)`,
+                  `\\( ${wrongOpts[1]} \\)`,
+                  `\\( ${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `由利潤金額與賺率求成本的公式： \\( 成本 = \\frac{利潤}{賺率} \\)<br>` +
+                             `\\( 成本 = \\frac{${profit}}{15\\%} = \\frac{${profit}}{0.15} = \\$${cost} \\)。`
+              };
+            } else {
+              const discountAmount = (Math.floor(Math.random() * 5) + 2) * 30; 
+              const discountPct = 30; 
+              const mp = discountAmount / 0.3;
+
+              const wrongOpts = generateDistinctOptions(mp, 50, 4).filter(v => v !== mp);
+
+              return {
+                question: `某商品在清倉期間減免了 \\( \\$${discountAmount} \\) 售出。若已知該交易是按 **七折** 出售（即折減了 \\( 30\\% \\)），求該商品的 **標價**。`,
+                options: [
+                  `\\( \\$${mp} \\)`,
+                  `\\( \\$${wrongOpts[0]} \\)`,
+                  `\\( \\$${wrongOpts[1]} \\)`,
+                  `\\( \\$${wrongOpts[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `由折扣與折扣百分率求標價的公式 : \\( 標價 = \\frac{折扣金額}{折扣百分率} \\)<br>` +
+                             `\\( 標價 = \\frac{${discountAmount}}{30\\%} = \\frac{${discountAmount}}{0.3} = \\$${mp} \\)。`
+              };
+            }
+          }
+
+        case 4: // Chapter 4: 近似值與估算之谷
+          if (level === 1) {
+            const val = (Math.random() * 40 + 10).toFixed(2); 
+            const floatVal = parseFloat(val);
+            const rType = Math.floor(Math.random() * 3); 
+            let ans = 0;
+            let typeName = "";
+            let ruleLabel = "";
+            if (rType === 0) {
+              ans = Math.round(floatVal);
+              typeName = "四捨五入";
+              ruleLabel = "四捨五入";
+            } else if (rType === 1) {
+              ans = Math.ceil(floatVal);
+              typeName = "無條件上捨入";
+              ruleLabel = "上捨入";
+            } else {
+              ans = Math.floor(floatVal);
+              typeName = "無條件下捨入";
+              ruleLabel = "下捨入";
+            }
+
+            const wrongOpts = generateDistinctOptions(ans, 1, 4).filter(v => v !== ans);
+
+            return {
+              question: `將法力源能值 \\( ${val} \\) 依 **${typeName}** 捨入至最接近的整數。`,
+              options: [
+                `\\( ${ans} \\)`,
+                `\\( ${wrongOpts[0]} \\)`,
+                `\\( ${wrongOpts[1]} \\)`,
+                `\\( ${wrongOpts[2]} \\)`
+              ],
+              answer: 0,
+              explanation: `根據 **${typeName}** 的規則：<br>` +
+                           `對於小數 \\( ${val} \\)，將其進行${ruleLabel}至最接近的整數，結果為 \\( ${ans} \\)。`
+            };
+          } else {
+            // NEW COMPREHENSIVE LEVEL 2 QUESTIONS (2 or 4 Sig Figs, 1 or 3 Decimals, Up/Down to Decimals)
+            const subType = Math.floor(Math.random() * 3);
+            if (subType === 0) {
+              // Sig figs (2 or 4)
+              const sf = Math.random() < 0.5 ? 2 : 4;
+              const val = (Math.floor(Math.random() * 90000) + 10000) / 1000; // e.g. 10.000 to 99.999
+              const ansStr = val.toPrecision(sf);
+              const ans = parseFloat(ansStr);
+              const wrongOpts = generateDistinctOptions(ans, Math.pow(10, 2 - sf), 4).filter(v => parseFloat(v.toPrecision(sf)) !== ans);
+              return {
+                question: `將數值 \\( ${val} \\) 依 **四捨五入** 修正至 **${sf} 位有效數字 (${sf} significant figures)**。`,
+                options: [
+                  `\\( ${ans} \\)`,
+                  `\\( ${parseFloat(wrongOpts[0].toPrecision(sf))} \\)`,
+                  `\\( ${parseFloat(wrongOpts[1].toPrecision(sf))} \\)`,
+                  `\\( ${parseFloat(wrongOpts[2].toPrecision(sf))} \\)`
+                ],
+                answer: 0,
+                explanation: `有效數字由最左邊第一個非零數字起算 ${sf} 位：<br>` +
+                             `對於 \\( ${val} \\)，進行四捨五入至第 ${sf} 位有效數字，結果為 \\( ${ans} \\)。`
+              };
+            } else if (subType === 1) {
+              // Decimal places (1 or 3)
+              const dp = Math.random() < 0.5 ? 1 : 3;
+              const val = (Math.random() * 8 + 1).toFixed(5);
+              const floatVal = parseFloat(val);
+              const ans = parseFloat(floatVal.toFixed(dp));
+              const wrongOpts = generateDistinctOptions(ans, Math.pow(10, -dp), 4).filter(v => v !== ans);
+              return {
+                question: `將 \\( ${val} \\) 依 **四捨五入** 修正至 **${dp} 位小數位 (${dp} decimal places)**。`,
+                options: [
+                  `\\( ${ans.toFixed(dp)} \\)`,
+                  `\\( ${wrongOpts[0].toFixed(dp)} \\)`,
+                  `\\( ${wrongOpts[1].toFixed(dp)} \\)`,
+                  `\\( ${wrongOpts[2].toFixed(dp)} \\)`
+                ],
+                answer: 0,
+                explanation: `四捨五入至 ${dp} 位小數位，需觀察第 ${dp+1} 位小數：<br>` +
+                             `數值為 \\( ${val} \\)，捨入後的結果為 \\( ${ans.toFixed(dp)} \\)。`
+              };
+            } else {
+              // Round up or down to 1 or 2 decimal places
+              const isUp = Math.random() < 0.5;
+              const dp = Math.random() < 0.5 ? 1 : 2;
+              const val = (Math.random() * 15 + 5).toFixed(4); // e.g. 5.1234
+              const floatVal = parseFloat(val);
+              
+              let ans;
+              const factor = Math.pow(10, dp);
+              if (isUp) {
+                ans = Math.ceil(floatVal * factor) / factor;
+              } else {
+                ans = Math.floor(floatVal * factor) / factor;
+              }
+              const methodStr = isUp ? "無條件上捨入" : "無條件下捨入";
+              const wrongOpts = generateDistinctOptions(ans, 1 / factor, 4).filter(v => v !== ans);
+
+              return {
+                question: `將 \\( ${val} \\) 依 **${methodStr}** 修正至 **${dp} 位小數位**。`,
+                options: [
+                  `\\( ${ans.toFixed(dp)} \\)`,
+                  `\\( ${wrongOpts[0].toFixed(dp)} \\)`,
+                  `\\( ${wrongOpts[1].toFixed(dp)} \\)`,
+                  `\\( ${wrongOpts[2].toFixed(dp)} \\)`
+                ],
+                answer: 0,
+                explanation: `根據 **${methodStr}** 規則修正至 ${dp} 位小數位：<br>` +
+                             `對於 \\( ${val} \\)，將其小數第 ${dp} 位後的所有數字進行${isUp ? '進位' : '捨去'}，結果為 \\( ${ans.toFixed(dp)} \\)。`
+              };
+            }
+          }
+
+        case 5: // Chapter 5: 多項式秩序之殿
+          if (level === 1) {
+            // Simplify addition, subtraction or multiplication
+            const polyType = Math.floor(Math.random() * 2);
+            if (polyType === 0) {
+              // Add/Sub polynomials: e.g. (2x^2 + ax + b) + (x^2 - cx + d)
+              const a = Math.floor(Math.random() * 4) + 2; 
+              const b = Math.floor(Math.random() * 6) + 1; 
+              const c = Math.floor(Math.random() * 4) + 1; 
+              const d = Math.floor(Math.random() * 6) + 1; 
+              
+              const isAdd = Math.random() < 0.5;
+              const term2 = isAdd ? (1 + a) : (a - 1);
+              const term1 = isAdd ? (b - c) : (b + c);
+              
+              // FIXED: Corrected the subtraction sign calculation from (d-2) to (2-d)
+              const term0 = isAdd ? (d + 2) : (2 - d);
+
+              const partA = `${a}x^2 + ${b}x + 2`;
+              const partB = `x^2 - ${c}x + ${d}`;
+              const expr = isAdd ? `(${partA}) + (${partB})` : `(${partA}) - (${partB})`;
+              
+              const correctStr = formatPoly(term2, term1, term0);
+              const wrong1 = formatPoly(term2, term1 + 2, term0);
+              const wrong2 = formatPoly(term2 - 1, term1, term0 - 1);
+              const wrong3 = formatPoly(term2, term1, -term0);
+
+              return {
+                question: `展開並合併同類項以化簡代數式： \\( ${expr} \\)。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrong1} \\)`,
+                  `\\( ${wrong2} \\)`,
+                  `\\( ${wrong3} \\)`
+                ],
+                answer: 0,
+                explanation: `合併同類項的化簡過程：<br>` +
+                             `原式 \\( = ${expr} \\)<br>` +
+                             `依據次方對齊合併：<br>` +
+                             `\\( x^2 \\) 項：\\( ${isAdd ? `${a} + 1` : `${a} - 1`} = ${term2} \\)<br>` +
+                             `\\( x \\) 項：\\( ${isAdd ? `${b} - ${c}` : `${b} + ${c}`} = ${term1} \\)<br>` +
+                             `常數項：\\( ${isAdd ? `2 + ${d}` : `2 - ${d}`} = ${term0} \\)<br>` +
+                             `合併後即為：\\( ${correctStr} \\)。`
+              };
+            } else {
+              // FIXED AND DE-DUPLICATED Multiplication: (x + a)(x + b)
+              let a, b;
+              do {
+                a = Math.floor(Math.random() * 9) - 4; // -4 to 4
+                b = Math.floor(Math.random() * 9) - 4; // -4 to 4
+              } while (a === 0 || b === 0 || a === b);
+
+              const sum = a + b;
+              const prod = a * b;
+
+              const aSign = a > 0 ? `+ ${a}` : `- ${Math.abs(a)}`;
+              const bSign = b > 0 ? `+ ${b}` : `- ${Math.abs(b)}`;
+              const expr = `(x ${aSign})(x ${bSign})`;
+
+              const correctStr = formatPoly(1, sum, prod);
+              
+              // Prevent duplicates in options list (using de-duplicated Set securely)
+              let wrongsSet = new Set();
+              wrongsSet.add(formatPoly(1, -sum, prod));
+              wrongsSet.add(formatPoly(1, sum, -prod));
+              wrongsSet.add(formatPoly(1, a * b, a + b));
+              wrongsSet.add(formatPoly(1, sum + 2, prod - 1));
+              wrongsSet.add(formatPoly(1, sum - 2, prod + 1));
+              wrongsSet.add(formatPoly(1, sum + 1, prod + 2));
+              wrongsSet.delete(correctStr); // guarantee correctStr never appears in wrongs
+
+              let wrongs = Array.from(wrongsSet);
+              while (wrongs.length < 3) {
+                wrongs.push(formatPoly(1, sum + wrongs.length + 3, prod - wrongs.length - 2));
+              }
+              wrongs = wrongs.slice(0, 3);
+
+              return {
+                question: `使用展開法化簡多項式乘積： \\( ${expr} \\)。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrongs[0]} \\)`,
+                  `\\( ${wrongs[1]} \\)`,
+                  `\\( ${wrongs[2]} \\)`  // 🎯 FIXED: Corrected reference error 'wrong' to 'wrongs'
+                ],
+                answer: 0,
+                explanation: `使用分配律展開括號 \\( (x + a)(x + b) = x^2 + (a+b)x + ab \\)：<br>` +
+                             `代入 \\( a = ${a} \\), \\( b = ${b} \\)：<br>` +
+                             `\\( (x ${a > 0 ? '+' : ''}${a})(x ${b > 0 ? '+' : ''}${b}) \\)<br>` +
+                             `\\( = x^2 + (${a} + ${b})x + (${a}) \\times (${b}) \\)<br>` +
+                             `\\( = ${correctStr} \\)。`
+              };
+            }
+          } else {
+            // Lv 2: specific polynomial attributes (number of terms, degree, coefficients, constants)
+            // Includes 0 answer questions
+            const askType = Math.floor(Math.random() * 4);
+            const c3 = Math.floor(Math.random() * 4) + 2; 
+            const c1 = (Math.floor(Math.random() * 5) + 2) * (Math.random() < 0.5 ? 1 : -1);
+            
+            // Polynomial: c3*x^3 + c1*x. 
+            // Degree=3, Terms=2, Constant=0, x^2 coefficient=0
+            const poly = `${c3}x^3 ${c1 > 0 ? '+' : ''}${c1}x`;
+
+            if (askType === 0) {
+              // Number of terms
+              return {
+                question: `在神殿多項式 \\( P(x) = ${poly} \\) 中，求多項式的 **項數 (Number of terms)**。`,
+                options: ["2", "3", "1", "0"],
+                answer: 0,
+                explanation: `項數指多項式中由加減號分隔的單項個數。<br>` +
+                             `多項式 \\( ${poly} \\) 包含兩項（即 \\( ${c3}x^3 \\) 與 \\( ${c1}x \\)），因此項數為 **2**。`
+              };
+            } else if (askType === 1) {
+              // x^2 coefficient (Zero answer)
+              return {
+                question: `在神殿多項式 \\( P(x) = ${poly} \\) 中，求 \\( x^2 \\) 項的 **係數 (Coefficient of \\( x^2 \\))**。`,
+                options: ["0", `${c3}`, `${c1}`, "1"],
+                answer: 0,
+                explanation: `多項式 \\( ${poly} \\) 中並不包含 any \\( x^2 \\) 的項。<br>` +
+                             `在數學上，這相當於存在 \\( 0x^2 \\)（該項被省略了）。因此，該項的係數為 **0**。`
+              };
+            } else if (askType === 2) {
+              // Constant term (Zero answer)
+              return {
+                question: `在神殿多項式 \\( P(x) = ${poly} \\) 中，求多項式的 **常數項 (Constant Term)**。`,
+                options: ["0", `${c1}`, `${c3}`, "3"],
+                answer: 0,
+                explanation: `常數項是不包含任何未知數的數項。在多項式 \\( ${poly} \\) 中，沒有純數值的常數項，因此常數項為 **0**。`
+              };
+            } else {
+              // Degree
+              return {
+                question: `在神殿多項式 \\( P(x) = ${poly} \\) 中，求多項式的 **次數 (Degree)**。`,
+                options: ["3", "2", "1", "0"],
+                answer: 0,
+                explanation: `多項式的次數是指未知數的最高次冪。最高次項為 \\( ${c3}x^3 \\)，其指數為 3，因此次數為 **3**。`
+              };
+            }
+          }
+
+        case 6: // Chapter 6: 直角坐標變幻幻境
+          if (level === 1) {
+            // Lv 1: single Transformation
+            const tx = (Math.floor(Math.random() * 7) + 2) * (Math.random() < 0.5 ? 1 : -1);
+            const ty = (Math.floor(Math.random() * 7) + 2) * (Math.random() < 0.5 ? 1 : -1);
+            const pt = { x: tx, y: ty };
+
+            const transType = Math.floor(Math.random() * 3);
+            if (transType === 0) {
+              // Translation right/up
+              const val = Math.floor(Math.random() * 5) + 2;
+              const isRight = Math.random() < 0.5;
+              const action = { type: 'translate', dir: isRight ? 'right' : 'up', val: val };
+              const res = transformPt(pt, action);
+
+              // 🎯 FIXED: Wrapped options in LaTeX formatting and used Set for complete de-duplication to resolve Ch. 6 wrong-answer bug
+              const correctStr = `(${res.x}, ${res.y})`;
+              let optionsSet = new Set();
+              optionsSet.add(`(${res.x - 2}, ${res.y})`);
+              optionsSet.add(`(${-res.x}, ${res.y})`);
+              optionsSet.add(`(${res.y}, ${res.x})`);
+              optionsSet.add(`(${res.x}, ${-res.y})`);
+              optionsSet.delete(correctStr);
+
+              let wrongs = Array.from(optionsSet);
+              while (wrongs.length < 3) {
+                wrongs.push(`(${res.x + wrongs.length + 3}, ${res.y - wrongs.length - 2})`);
+              }
+              wrongs = wrongs.slice(0, 3);
+
+              return {
+                question: `在坐標平面上，點 \\( A(${tx}, ${ty}) \\) **${isRight ? '向右' : '向上'}平移 ${val} 單位** 得到 \\( A' \\)。求 \\( A' \\) 的坐標。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrongs[0]} \\)`,
+                  `\\( ${wrongs[1]} \\)`,
+                  `\\( ${wrongs[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `坐標平移：<br>` +
+                             `${isRight ? '向右平移橫坐標增加：' : '向上平移縱坐標增加：'}<br>` +
+                             `\\( A' = (${isRight ? `${tx} + ${val}` : `${tx}`}, ${isRight ? `${ty}` : `${ty} + ${val}`}) = (${res.x}, ${res.y}) \\)。`
+              };
+            } else if (transType === 1) {
+              // Reflection along X/Y Axis
+              const isX = Math.random() < 0.5;
+              const action = { type: 'reflect', axis: isX ? 'x' : 'y' };
+              const res = transformPt(pt, action);
+
+              // 🎯 FIXED: Wrapped options in LaTeX formatting and used Set for complete de-duplication to resolve Ch. 6 wrong-answer bug
+              const correctStr = `(${res.x}, ${res.y})`;
+              let optionsSet = new Set();
+              optionsSet.add(`(${-res.x}, ${-res.y})`);
+              optionsSet.add(`(${res.y}, ${res.x})`);
+              optionsSet.add(`(${tx}, ${ty})`);
+              optionsSet.add(`(${res.x}, ${-res.y})`);
+              optionsSet.delete(correctStr);
+
+              let wrongs = Array.from(optionsSet);
+              while (wrongs.length < 3) {
+                wrongs.push(`(${-res.x - wrongs.length - 2}, ${-res.y + wrongs.length + 2})`);
+              }
+              wrongs = wrongs.slice(0, 3);
+
+              return {
+                question: `在坐標平面上，點 \\( B(${tx}, ${ty}) \\) **沿 ${isX ? 'x' : 'y'} 軸反射** 得到 \\( B' \\)。求 \\( B' \\) 的坐標。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrongs[0]} \\)`,
+                  `\\( ${wrongs[1]} \\)`,
+                  `\\( ${wrongs[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `反射變換：<br>` +
+                             `沿 **${isX ? 'x' : 'y'} 軸** 反射時，其**${isX ? '縱坐標 (y)' : '橫坐標 (x)'}變號**，另一坐標保持不變。<br>` +
+                             `反射後坐標為 \\( (${res.x}, ${res.y}) \\)。`
+              };
+            } else {
+              // Rotation 90, 180, 270 clockwise
+              const degOpts = [90, 180, 270];
+              const deg = degOpts[Math.floor(Math.random() * 3)];
+              const action = { type: 'rotate', deg: deg };
+              const res = transformPt(pt, action);
+
+              // 🎯 FIXED: Wrapped options in LaTeX formatting and used Set for complete de-duplication to resolve Ch. 6 wrong-answer bug
+              const correctStr = `(${res.x}, ${res.y})`;
+              let optionsSet = new Set();
+              optionsSet.add(`(${-res.x}, ${res.y})`);
+              optionsSet.add(`(${res.y}, ${res.x})`);
+              optionsSet.add(`(${tx}, ${ty})`);
+              optionsSet.add(`(${-tx}, ${-ty})`);
+              optionsSet.delete(correctStr);
+
+              let wrongs = Array.from(optionsSet);
+              while (wrongs.length < 3) {
+                wrongs.push(`(${-res.x + wrongs.length + 1}, ${res.y - wrongs.length - 1})`);
+              }
+              wrongs = wrongs.slice(0, 3);
+
+              return {
+                question: `在坐標平面上，點 \\( A(${tx}, ${ty}) \\) **繞原點順時針旋轉 \\( ${deg}^{\\circ} \\)** 得到 \\( A' \\)。求 \\( A' \\) 的坐標。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrongs[0]} \\)`,
+                  `\\( ${wrongs[1]} \\)`,
+                  `\\( ${wrongs[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `旋轉變換規則：<br>` +
+                             `原點繞行旋轉 \\( ${deg}^{\\circ} \\) 後，新位置為 \\( (${res.x}, ${res.y}) \\)。`
+              };
+            }
+          } else {
+            // Lv 2: Composite Transformation (2 steps combined)
+            const tx = (Math.floor(Math.random() * 5) + 2) * (Math.random() < 0.5 ? 1 : -1);
+            const ty = (Math.floor(Math.random() * 5) + 2) * (Math.random() < 0.5 ? 1 : -1);
+            const pt = { x: tx, y: ty };
+
+            const isTypeOne = Math.random() < 0.5;
+            if (isTypeOne) {
+              // Step 1: Reflect X. Step 2: Translate Right
+              const val = Math.floor(Math.random() * 3) + 2; 
+              const act1 = { type: 'reflect', axis: 'x' };
+              const act2 = { type: 'translate', dir: 'right', val: val };
+
+              const mid = transformPt(pt, act1);
+              const res = transformPt(mid, act2);
+
+              // 🎯 FIXED: Wrapped options in LaTeX formatting and used Set for complete de-duplication to resolve Ch. 6 wrong-answer bug
+              const correctStr = `(${res.x}, ${res.y})`;
+              let optionsSet = new Set();
+              optionsSet.add(`(${tx + val}, ${ty})`);
+              optionsSet.add(`(${res.x}, ${-res.y})`);
+              optionsSet.add(`(${-res.x}, ${res.y})`);
+              optionsSet.add(`(${-tx}, ${-ty})`);
+              optionsSet.delete(correctStr);
+
+              let wrongs = Array.from(optionsSet);
+              while (wrongs.length < 3) {
+                wrongs.push(`(${res.x - wrongs.length - 2}, ${-res.y + wrongs.length + 3})`);
+              }
+              wrongs = wrongs.slice(0, 3);
+
+              return {
+                question: `空間坐標點 \\( D(${tx}, ${ty}) \\) 先**沿 x 軸反射**，再**向右平移 ${val} 單位**。求最終的複合變換坐標。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrongs[0]} \\)`,
+                  `\\( ${wrongs[1]} \\)`,
+                  `\\( ${wrongs[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `逐步進行複合空間變換：<br>` +
+                             `1. 沿 x 軸反射（y 變號）： \\( (${tx}, ${ty}) \\rightarrow (${mid.x}, ${mid.y}) \\)<br>` +
+                             `2. 向右平移 \\( ${val} \\) 單位（x 增加）： \\( (${mid.x} + ${val}, ${mid.y}) = (${res.x}, ${res.y}) \\)。`
+              };
+            } else {
+              // Step 1: Translate Down, Step 2: Rotate 180
+              const val = Math.floor(Math.random() * 3) + 2; 
+              const act1 = { type: 'translate', dir: 'down', val: val };
+              const act2 = { type: 'rotate', deg: 180 };
+
+              const mid = transformPt(pt, act1);
+              const res = transformPt(mid, act2);
+
+              // 🎯 FIXED: Wrapped options in LaTeX formatting and used Set for complete de-duplication to resolve Ch. 6 wrong-answer bug
+              const correctStr = `(${res.x}, ${res.y})`;
+              let optionsSet = new Set();
+              optionsSet.add(`(${-tx}, ${-ty - val})`);
+              optionsSet.add(`(${res.x}, ${-res.y})`);
+              optionsSet.add(`(${mid.x}, ${mid.y})`);
+              optionsSet.add(`(${-res.x}, ${res.y})`);
+              optionsSet.delete(correctStr);
+
+              let wrongs = Array.from(optionsSet);
+              while (wrongs.length < 3) {
+                wrongs.push(`(${-res.x - wrongs.length - 2}, ${-res.y + wrongs.length + 2})`);
+              }
+              wrongs = wrongs.slice(0, 3);
+
+              return {
+                question: `空間坐標點 \\( E(${tx}, ${ty}) \\) 先**向下平移 ${val} 單位**，再**繞原點旋轉 \\( 180^{\\circ} \\)**。求最終變換坐標。`,
+                options: [
+                  `\\( ${correctStr} \\)`,
+                  `\\( ${wrongs[0]} \\)`,
+                  `\\( ${wrongs[1]} \\)`,
+                  `\\( ${wrongs[2]} \\)`
+                ],
+                answer: 0,
+                explanation: `逐步進行空間複合變換：<br>` +
+                             `1. 向下平移 \\( ${val} \\) 單位（y 減少）： \\( (${tx}, ${ty} - ${val}) = (${mid.x}, ${mid.y}) \\)<br>` +
+                             `2. 繞原點旋轉 \\( 180^{\\circ} \\) （x, y 同時變號）： \\( (-(${mid.x}), -(${mid.y})) = (${res.x}, ${res.y}) \\)。`
+              };
+            }
+          }
+      }
+    };
+  </script>
+
+  <!-- Single Unified Controller Script block to bind all global click functions -->
+  <script>
+    // 🔮 控制函式顯式全域繫結 (100% 根除 ReferenceError!)
+    window.switchLoginRole = function(isTeacher) {
+      window.isTeacherMode = isTeacher;
+      const tabStudent = document.getElementById('tab-student');
+      const tabTeacher = document.getElementById('tab-teacher');
+      const roleBadge = document.getElementById('role-badge');
+      const loginTitle = document.getElementById('login-title-h');
+      const loginSubtitle = document.getElementById('login-subtitle-p');
+      const labelId = document.getElementById('label-id');
+      const loginIdInput = document.getElementById('login-id-input');
+      const primaryBtn = document.getElementById('primary-action-btn');
+      const secondaryBtn = document.getElementById('secondary-toggle-btn');
+      const regFields = document.getElementById('registration-fields');
+
+      window.isRegisteringMode = false;
+      if (regFields) regFields.classList.add('hidden');
+
+      if (isTeacher) {
+        if (tabTeacher) tabTeacher.className = "py-2 text-xs font-bold rounded-lg transition-all text-white bg-purple-950/60 border border-purple-800/40";
+        if (tabStudent) tabStudent.className = "py-2 text-xs font-bold rounded-lg transition-all text-slate-400 hover:text-white";
+        if (roleBadge) roleBadge.innerText = "教師管理端系統";
+        if (loginTitle) loginTitle.innerText = "數學導師登入";
+        if (loginSubtitle) loginSubtitle.innerText = "請輸入教師專屬帳號 teacher1 與密碼 koomaths1 進入控制台";
+        if (labelId) labelId.innerText = "教師帳號";
+        if (loginIdInput) loginIdInput.placeholder = "teacher1";
+        if (primaryBtn) primaryBtn.innerText = "進入導師神殿 (登入)";
+        if (secondaryBtn) secondaryBtn.classList.add('hidden'); // 教師禁用註冊
+      } else {
+        if (tabStudent) tabStudent.className = "py-2 text-xs font-bold rounded-lg transition-all text-white bg-purple-950/60 border border-purple-800/40";
+        if (tabTeacher) tabTeacher.className = "py-2 text-xs font-bold rounded-lg transition-all text-slate-400 hover:text-white";
+        if (roleBadge) roleBadge.innerText = "學生登入帳號系統";
+        if (loginTitle) loginTitle.innerText = "數理勇者登入";
+        if (loginSubtitle) loginSubtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
+        if (labelId) labelId.innerText = "學生學號 / 帳號";
+        if (loginIdInput) loginIdInput.placeholder = "例如：s12345";
+        if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
+        if (secondaryBtn) secondaryBtn.classList.remove('hidden'); // 學生展示註冊
+      }
+    };
+
+    window.toggleRegistrationMode = function() {
+      window.isRegisteringMode = !window.isRegisteringMode;
+      const regFields = document.getElementById('registration-fields');
+      const title = document.getElementById('login-title-h');
+      const subtitle = document.getElementById('login-subtitle-p');
+      const primaryBtn = document.getElementById('primary-action-btn');
+      const secondaryBtn = document.getElementById('secondary-toggle-btn');
+      const divRegClass = document.getElementById('div-reg-class');
+      const divRegStudentNo = document.getElementById('div-reg-student-no');
+      const labelRegStudentName = document.getElementById('label-reg-student-name');
+      const regStudentName = document.getElementById('reg-student-name');
+
+      if (window.isRegisteringMode) {
+        if (regFields) regFields.classList.remove('hidden');
+        if (window.isTeacherMode) {
+          if (divRegClass) divRegClass.classList.add('hidden');
+          if (divRegStudentNo) divRegStudentNo.classList.add('hidden');
+          if (labelRegStudentName) labelRegStudentName.innerText = "導師姓名 (中文/英文)";
+          if (regStudentName) regStudentName.placeholder = "例如：Miss Chan / 陳老師";
+          if (title) title.innerText = "教師帳號註冊";
+          if (subtitle) subtitle.innerText = "請設定專屬教師帳號、密碼與姓名以獲取管理儀盤權限";
+          if (primaryBtn) primaryBtn.innerText = "建立教師帳號";
+          if (secondaryBtn) secondaryBtn.innerText = "返回登入畫面";
+        } else {
+          if (divRegClass) divRegClass.classList.remove('hidden');
+          if (divRegStudentNo) divRegStudentNo.classList.remove('hidden');
+          if (labelRegStudentName) labelRegStudentName.innerText = "英文名字 (English Name)";
+          if (regStudentName) regStudentName.placeholder = "例如：Alex Chan";
+          if (title) title.innerText = "新勇者帳號註冊";
+          if (subtitle) subtitle.innerText = "請輸入學號，並詳細填寫班別與姓名資訊以建立新存檔";
+          if (primaryBtn) primaryBtn.innerText = "建立角色並選擇職業";
+          if (secondaryBtn) secondaryBtn.innerText = "返回登入畫面";
+        }
+      } else {
+        if (regFields) regFields.classList.add('hidden');
+        if (window.isTeacherMode) {
+          if (title) title.innerText = "數學導師登入";
+          if (subtitle) subtitle.innerText = "請輸入教師專屬帳號與密碼以進入魔法導師神殿控制台";
+          if (primaryBtn) primaryBtn.innerText = "進入導師神殿 (登入)";
+          if (secondaryBtn) secondaryBtn.innerText = "註冊導師帳號";
+        } else {
+          if (title) title.innerText = "數理勇者登入";
+          if (subtitle) subtitle.innerText = "請輸入您的學生學號或設定專屬帳號密碼以開啟雲端進度儲存";
+          if (primaryBtn) primaryBtn.innerText = "開始冒險 (登入)";
+          if (secondaryBtn) secondaryBtn.innerText = "註冊新勇者帳號";
+        }
+      }
+    };
+
+    window.executeAuthentication = executeAuthentication;
+    window.closeExplanation = closeExplanation;
+    window.showGameOverScreen = showGameOverScreen;
+    window.showToast = showToast;
+    window.loadLoggedProfile = loadLoggedProfile;
+    window.continuePlayingChapter = continuePlayingChapter;
+
+    window.openJobSelection = openJobSelection;
+    window.closeJobSelection = closeJobSelection;
+    window.selectJobAction = selectJobAction;
+    window.openShopModal = openShopModal;
+    window.closeShopModal = closeShopModal;
+    window.buyShopItem = buyShopItem;
+    window.openGrimoireModal = openGrimoireModal;
+    window.closeGrimoireModal = closeGrimoireModal;
+    window.openLeaderboardModal = openLeaderboardModal;
+    window.closeLeaderboardModal = closeLeaderboardModal;
+    window.triggerManualUpload = triggerManualUpload;
+    window.confirmAccountDeletion = confirmAccountDeletion;
+    window.closeAccountDeletion = closeAccountDeletion;
+    window.executeAccountDeletion = executeAccountDeletion;
+    window.executeLogout = executeLogout;
+
+    window.startAdventure = startAdventure;
+    window.exitToMap = exitToMap;
+    window.checkAnswer = checkAnswer;
+    window.usePotionItem = usePotionItem;
+    window.useScrollItem = useScrollItem;
+    window.useElixirItem = useElixirItem;
+  </script>
+</body>
+</html>
